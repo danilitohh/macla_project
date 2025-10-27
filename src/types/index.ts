@@ -55,13 +55,41 @@ export interface OrderCustomer {
 }
 
 export interface OrderPayload {
-  code: string
   customer: OrderCustomer
-  paymentMethod: PaymentMethod | undefined
-  shippingOption: ShippingOption | undefined
-  items: CartItem[]
+  shippingOptionId: string | null
+  paymentMethodId: string | null
+  items?: CartItem[]
+}
+
+export type OrderStatus = 'pending' | 'paid' | 'shipped' | 'cancelled'
+
+export interface OrderProductSnapshot extends Record<string, unknown> {
+  id: string
+  name: string
+  price: number
+  currency: 'COP'
+}
+
+export interface OrderItemSummary {
+  product: OrderProductSnapshot
+  quantity: number
+  unitPrice: number
+  lineTotal: number
+}
+
+export interface OrderSummary {
+  id: number
+  code: string
+  status: OrderStatus
+  submittedAt: string | null
   subtotal: number
   shippingCost: number
   total: number
-  submittedAt: string
+  currency: 'COP'
+  customerName: string
+  customerCity: string
+  notes: string | null
+  paymentMethod: { id: string; label: string; description?: string | null } | null
+  shippingOption: { id: string; label: string; description?: string | null; price: number | null } | null
+  items: OrderItemSummary[]
 }

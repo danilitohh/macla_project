@@ -846,10 +846,130 @@ textarea {
   color: var(--color-muted);
 }
 
+.account-orders {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.orders-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1.5rem;
+}
+
+.order-card {
+  background: var(--color-surface);
+  border-radius: calc(var(--radius) * 1.05);
+  box-shadow: var(--shadow-light);
+  padding: 1.8rem 2rem;
+  display: grid;
+  gap: 1.4rem;
+}
+
+.order-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.order-card__header h3 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.order-card__body {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.order-card__meta {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.order-card__meta div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.order-card__meta dt {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-muted);
+}
+
+.order-card__meta dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.order-card__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.order-card__items li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.95rem;
+}
+
+.order-card__notes {
+  margin: 0;
+  background: rgba(17, 17, 17, 0.05);
+  padding: 0.9rem 1rem;
+  border-radius: calc(var(--radius) * 0.6);
+  color: var(--color-muted);
+  font-size: 0.9rem;
+}
+
+.order-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem 0.85rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.order-status--pending {
+  background: rgba(255, 200, 87, 0.2);
+  color: #b98500;
+}
+
+.order-status--paid,
+.order-status--shipped {
+  background: rgba(99, 197, 149, 0.2);
+  color: #117a43;
+}
+
+.order-status--cancelled {
+  background: rgba(239, 83, 80, 0.18);
+  color: #b3261e;
+}
+
 @media (min-width: 900px) {
   .account-card {
     grid-template-columns: 2fr 1fr;
     align-items: start;
+  }
+}
+
+@media (min-width: 720px) {
+  .order-card__meta {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   }
 }
 

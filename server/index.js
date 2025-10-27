@@ -40,6 +40,37 @@ const safeInteger = (value, fallback = 0) => {
   if (!Number.isFinite(parsed)) return fallback
   return Math.max(0, Math.trunc(parsed))
 }
+const sanitizeText = (value = '') => String(value).trim()
+const parseJsonSafe = (value) => {
+  if (!value) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(value)
+    if (parsed && typeof parsed === 'object') {
+      return parsed
+    }
+    return null
+  } catch (_error) {
+    return null
+  }
+}
+const normalizeProductSnapshot = (snapshot, { id, name, unitPrice }) => {
+  const normalizedId = snapshot?.id || id || null
+  const normalizedName = snapshot?.name || name || (normalizedId ? `Producto ${normalizedId}` : 'Producto')
+  const normalizedPrice = safeInteger(snapshot?.price, unitPrice)
+  return {
+    ...(snapshot && typeof snapshot === 'object' ? snapshot : {}),
+    id: normalizedId || (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `product-${Date.now()}`),
+    name: normalizedName,
+    price: normalizedPrice,
+    currency: snapshot?.currency || 'COP'
+  }
+}
+const generateOrderCode = () => {
+  const random = crypto.randomBytes(4).toString('hex').toUpperCase()
+  return `MAC-${random.slice(0, 8)}`
+}
 
 const SQL = {
   userByEmail: 'SELECT id, name, email, password_hash, role, is_active FROM users WHERE email = ?',
@@ -103,6 +134,105 @@ const SQL = {
     JOIN users u ON sc.user_id = u.id
     ORDER BY sc.updated_at DESC
     LIMIT 20
+  `,
+  shippingOptionById: `
+    SELECT id, label, description, price_cents
+    FROM shipping_options
+    WHERE id = ?
+      AND is_active = 1
+  `,
+  paymentMethodById: `
+    SELECT id, label, description
+    FROM payment_methods
+    WHERE id = ?
+      AND is_active = 1
+  `,
+  insertOrder: `
+    INSERT INTO orders (
+      code,
+      user_id,
+      cart_id,
+      customer_name,
+      customer_email,
+      customer_phone,
+      customer_city,
+      customer_address,
+      customer_notes,
+      payment_method_id,
+      shipping_option_id,
+      subtotal_cents,
+      shipping_cost_cents,
+      total_cents,
+      currency,
+      status,
+      submitted_at,
+      billing_address_json,
+      shipping_address_json,
+      metadata_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+  `,
+  insertOrderItem: `
+    INSERT INTO order_items (
+      order_id,
+      product_id,
+      product_name,
+      product_sku,
+      unit_price_cents,
+      quantity,
+      line_total_cents,
+      product_snapshot_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+  insertOrderStatusHistory: `
+    INSERT INTO order_status_history (order_id, from_status, to_status, changed_by, note)
+    VALUES (?, NULL, ?, ?, ?)
+  `,
+  markCartSubmitted: `
+    UPDATE shopping_carts
+    SET status = ?, submitted_at = ?, updated_at = ?, last_activity_at = ?
+    WHERE id = ?
+  `,
+  ordersByUser: `
+    SELECT
+      o.id,
+      o.code,
+      o.status,
+      o.subtotal_cents,
+      o.shipping_cost_cents,
+      o.total_cents,
+      o.currency,
+      o.submitted_at,
+      o.customer_name,
+      o.customer_city,
+      o.customer_notes,
+      o.payment_method_id,
+      pm.label AS payment_method_label,
+      o.shipping_option_id,
+      so.label AS shipping_option_label,
+      so.price_cents AS shipping_option_price
+    FROM orders o
+    LEFT JOIN payment_methods pm ON o.payment_method_id = pm.id
+    LEFT JOIN shipping_options so ON o.shipping_option_id = so.id
+    WHERE o.user_id = ?
+    ORDER BY o.submitted_at DESC, o.id DESC
+    LIMIT ?
+  `,
+  orderItemsByOrderId: `
+    SELECT
+      id,
+      order_id,
+      product_id,
+      product_name,
+      product_sku,
+      unit_price_cents,
+      quantity,
+      line_total_cents,
+      product_snapshot_json
+    FROM order_items
+    WHERE order_id = ?
+    ORDER BY id
   `
 }
 
@@ -385,6 +515,366 @@ app.put('/api/cart', requireAuth, async (req, res, next) => {
     return next(error)
   } finally {
     connection.release()
+  }
+})
+
+app.post('/api/orders', requireAuth, async (req, res, next) => {
+  const payload = req.body || {}
+  const customer = payload.customer || {}
+  const shippingOptionIdRaw = payload.shippingOptionId || payload.shippingOption?.id || ''
+  const paymentMethodIdRaw = payload.paymentMethodId || payload.paymentMethod?.id || ''
+  const shippingOptionId = sanitizeText(shippingOptionIdRaw) || null
+  const paymentMethodId = sanitizeText(paymentMethodIdRaw) || null
+
+  const customerName = sanitizeName(customer.name)
+  const customerEmail = normalizeEmail(customer.email)
+  const customerPhone = sanitizeText(customer.phone)
+  const customerCity = sanitizeText(customer.city)
+  const customerAddress = sanitizeText(customer.address)
+  const customerNotesRaw = sanitizeText(customer.notes || '')
+  const customerNotes = customerNotesRaw.length > 0 ? customerNotesRaw : null
+
+  if (!customerName) {
+    return res.status(400).json({ message: 'El nombre es obligatorio.' })
+  }
+  if (!customerEmail || !customerEmail.includes('@')) {
+    return res.status(400).json({ message: 'Debes ingresar un correo válido.' })
+  }
+  if (!customerPhone) {
+    return res.status(400).json({ message: 'Debes ingresar un teléfono de contacto.' })
+  }
+  if (!customerCity) {
+    return res.status(400).json({ message: 'Debes indicar la ciudad para el envío.' })
+  }
+  if (!customerAddress) {
+    return res.status(400).json({ message: 'Debes indicar la dirección de entrega.' })
+  }
+
+  const pool = getPool()
+  const connection = await pool.getConnection()
+
+  try {
+    await connection.beginTransaction()
+
+    const now = new Date()
+    const nowSql = formatDateForSql(now)
+    const shippingAddressPayload = {
+      name: customerName,
+      phone: customerPhone,
+      city: customerCity,
+      address: customerAddress,
+      notes: customerNotes || undefined
+    }
+    const metadata = {
+      origin: 'checkout-web',
+      submittedAt: now.toISOString()
+    }
+
+    let cartId = null
+    let cartItemsForResponse = []
+    let orderItemsForInsert = []
+    let subtotalCents = 0
+
+    const [cartRows] = await connection.execute(SQL.findActiveCart, [req.userId])
+    const cart = cartRows[0]
+    if (cart) {
+      cartId = cart.id
+      const [itemRows] = await connection.execute(SQL.selectCartItems, [cart.id])
+
+      for (const row of itemRows) {
+        const quantity = safeInteger(row.quantity, 0)
+        if (quantity <= 0) {
+          // eslint-disable-next-line no-continue
+          continue
+        }
+        const unitPrice = safeInteger(row.unit_price_cents, 0)
+        const lineTotal = safeInteger(row.line_total_cents, unitPrice * quantity)
+        const snapshot = parseJsonSafe(row.product_snapshot_json)
+        const productId = row.product_id || (snapshot?.id ? String(snapshot.id) : null)
+        const productName = snapshot?.name || snapshot?.title || (productId ? `Producto ${productId}` : 'Producto')
+        const productSku = snapshot?.sku || productId || null
+        const snapshotJson = snapshot ? JSON.stringify(snapshot) : row.product_snapshot_json
+
+        subtotalCents += lineTotal
+
+        orderItemsForInsert.push({
+          productId,
+          productName,
+          productSku,
+          unitPrice,
+          quantity,
+          lineTotal,
+          snapshotJson
+        })
+
+        const productDescriptor = normalizeProductSnapshot(snapshot, {
+          id: productId,
+          name: productName,
+          unitPrice
+        })
+
+        cartItemsForResponse.push({
+          product: productDescriptor,
+          quantity,
+          unitPrice,
+          lineTotal
+        })
+      }
+    }
+
+    if (orderItemsForInsert.length === 0) {
+      const payloadItems = Array.isArray(payload.items) ? payload.items : []
+      payloadItems.forEach((item) => {
+        const quantity = safeInteger(item?.quantity, 0)
+        if (quantity <= 0) {
+          return
+        }
+        const product = item?.product || null
+        const snapshot = product && typeof product === 'object' ? product : null
+        const unitPrice = safeInteger(product?.price, 0)
+        const lineTotal = unitPrice * quantity
+        if (unitPrice < 0) {
+          return
+        }
+        const productId = product?.id ? String(product.id) : null
+        const productName = sanitizeText(product?.name || '') || (productId ? `Producto ${productId}` : 'Producto')
+        const productSku = product?.sku || productId || null
+        const snapshotJson = snapshot ? JSON.stringify(snapshot) : null
+
+        subtotalCents += lineTotal
+
+        orderItemsForInsert.push({
+          productId,
+          productName,
+          productSku,
+          unitPrice,
+          quantity,
+          lineTotal,
+          snapshotJson
+        })
+
+        const productDescriptor = normalizeProductSnapshot(snapshot, {
+          id: productId,
+          name: productName,
+          unitPrice
+        })
+
+        cartItemsForResponse.push({
+          product: productDescriptor,
+          quantity,
+          unitPrice,
+          lineTotal
+        })
+      })
+    }
+
+    if (orderItemsForInsert.length === 0 || subtotalCents <= 0) {
+      await connection.rollback()
+      return res.status(400).json({ message: 'Tu carrito está vacío o no pudimos procesar los productos.' })
+    }
+
+    let shippingOption = null
+    let shippingCostCents = 0
+    if (shippingOptionId) {
+      const [shippingRows] = await connection.execute(SQL.shippingOptionById, [shippingOptionId])
+      shippingOption = shippingRows[0]
+      if (!shippingOption) {
+        await connection.rollback()
+        return res.status(400).json({ message: 'La opción de envío seleccionada no es válida.' })
+      }
+      shippingCostCents = safeInteger(shippingOption.price_cents, 0)
+      metadata.shippingOptionLabel = shippingOption.label
+    }
+
+    let paymentMethod = null
+    if (paymentMethodId) {
+      const [paymentRows] = await connection.execute(SQL.paymentMethodById, [paymentMethodId])
+      paymentMethod = paymentRows[0]
+      if (!paymentMethod) {
+        await connection.rollback()
+        return res.status(400).json({ message: 'El método de pago seleccionado no es válido.' })
+      }
+      metadata.paymentMethodLabel = paymentMethod.label
+    }
+
+    const totalCents = subtotalCents + shippingCostCents
+    metadata.itemsCount = orderItemsForInsert.length
+
+    const shippingAddressJson = JSON.stringify(shippingAddressPayload)
+    const metadataJson = JSON.stringify(metadata)
+
+    let orderId = null
+    let orderCode = null
+    const maxAttempts = 5
+    let attempts = 0
+    // eslint-disable-next-line no-constant-condition
+    while (attempts < maxAttempts) {
+      attempts += 1
+      orderCode = generateOrderCode()
+      try {
+        const [orderResult] = await connection.execute(SQL.insertOrder, [
+          orderCode,
+          req.userId,
+          cartId,
+          customerName,
+          customerEmail,
+          customerPhone,
+          customerCity,
+          customerAddress,
+          customerNotes,
+          paymentMethodId,
+          shippingOptionId,
+          subtotalCents,
+          shippingCostCents,
+          totalCents,
+          'COP',
+          nowSql,
+          null,
+          shippingAddressJson,
+          metadataJson
+        ])
+        orderId = orderResult.insertId
+        break
+      } catch (error) {
+        if (error && error.code === 'ER_DUP_ENTRY' && attempts < maxAttempts) {
+          continue
+        }
+        throw error
+      }
+    }
+
+    if (!orderId) {
+      throw new Error('No pudimos generar el pedido. Intenta nuevamente.')
+    }
+
+    for (const item of orderItemsForInsert) {
+      // eslint-disable-next-line no-await-in-loop
+      await connection.execute(SQL.insertOrderItem, [
+        orderId,
+        item.productId,
+        item.productName,
+        item.productSku,
+        item.unitPrice,
+        item.quantity,
+        item.lineTotal,
+        item.snapshotJson
+      ])
+    }
+
+    await connection.execute(SQL.insertOrderStatusHistory, [
+      orderId,
+      'pending',
+      'system',
+      'Orden creada desde el checkout web.'
+    ])
+
+    if (cartId) {
+      await connection.execute(SQL.markCartSubmitted, ['submitted', nowSql, nowSql, nowSql, cartId])
+    }
+
+    await connection.commit()
+
+    return res.status(201).json({
+      order: {
+        id: orderId,
+        code: orderCode,
+        status: 'pending',
+        subtotal: subtotalCents,
+        shippingCost: shippingCostCents,
+        total: totalCents,
+        currency: 'COP',
+        submittedAt: now.toISOString(),
+        customerName,
+        customerCity,
+        notes: customerNotes,
+        paymentMethod: paymentMethod
+          ? { id: paymentMethod.id, label: paymentMethod.label, description: paymentMethod.description || null }
+          : null,
+        shippingOption: shippingOption
+          ? {
+              id: shippingOption.id,
+              label: shippingOption.label,
+              description: shippingOption.description || null,
+              price: safeInteger(shippingOption.price_cents, shippingCostCents)
+            }
+          : null,
+        items: cartItemsForResponse
+      }
+    })
+  } catch (error) {
+    await connection.rollback()
+    return next(error)
+  } finally {
+    connection.release()
+  }
+})
+
+app.get('/api/orders', requireAuth, async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100)
+    const [orderRows] = await query(SQL.ordersByUser, [req.userId, limit])
+
+    if (orderRows.length === 0) {
+      return res.json({ orders: [] })
+    }
+
+    const ordersWithItems = await Promise.all(
+      orderRows.map(async (order) => {
+        const [itemRows] = await query(SQL.orderItemsByOrderId, [order.id])
+        const items = itemRows.map((row) => {
+          const quantity = safeInteger(row.quantity, 0)
+          const unitPrice = safeInteger(row.unit_price_cents, 0)
+          const lineTotal = safeInteger(row.line_total_cents, unitPrice * quantity)
+          const snapshot = parseJsonSafe(row.product_snapshot_json)
+          const productId = row.product_id || (snapshot?.id ? String(snapshot.id) : null)
+          const productName = snapshot?.name || row.product_name || (productId ? `Producto ${productId}` : 'Producto')
+          const productDescriptor = normalizeProductSnapshot(snapshot, {
+            id: productId,
+            name: productName,
+            unitPrice
+          })
+
+          return {
+            product: productDescriptor,
+            quantity,
+            unitPrice,
+            lineTotal
+          }
+        })
+
+        return {
+          id: order.id,
+          code: order.code,
+          status: order.status,
+          subtotal: safeInteger(order.subtotal_cents, 0),
+          shippingCost: safeInteger(order.shipping_cost_cents, 0),
+          total: safeInteger(order.total_cents, 0),
+          currency: order.currency || 'COP',
+          submittedAt: order.submitted_at ? new Date(order.submitted_at).toISOString() : null,
+          customerName: order.customer_name,
+          customerCity: order.customer_city,
+          notes: order.customer_notes || null,
+          paymentMethod: order.payment_method_id
+            ? {
+                id: order.payment_method_id,
+                label: order.payment_method_label || order.payment_method_id
+              }
+            : null,
+          shippingOption: order.shipping_option_id
+            ? {
+                id: order.shipping_option_id,
+                label: order.shipping_option_label || order.shipping_option_id,
+                price: safeInteger(order.shipping_option_price, 0)
+              }
+            : null,
+          items
+        }
+      })
+    )
+
+    return res.json({ orders: ordersWithItems })
+  } catch (error) {
+    return next(error)
   }
 })
 

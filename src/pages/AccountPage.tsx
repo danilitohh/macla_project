@@ -1,9 +1,36 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { getUserOrders } from '../services/orderService'
+import type { OrderSummary, OrderStatus } from '../types'
+import { formatCurrency } from '../utils/format'
 
 type FormMode = 'login' | 'register'
+
+const STATUS_LABELS: Record<OrderStatus, string> = {
+  pending: 'Pendiente',
+  paid: 'Pagado',
+  shipped: 'Enviado',
+  cancelled: 'Cancelado'
+}
+
+const formatOrderDate = (isoDate: string | null) => {
+  if (!isoDate) {
+    return 'Fecha por confirmar'
+  }
+  const date = new Date(isoDate)
+  if (Number.isNaN(date.getTime())) {
+    return 'Fecha por confirmar'
+  }
+  return date.toLocaleDateString('es-CO', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
 
 const AccountPage = () => {
   const { user, isAuthenticated, login, register, logout, error, clearError } = useAuth()
@@ -11,6 +38,9 @@ const AccountPage = () => {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
+  const [orders, setOrders] = useState<OrderSummary[]>([])
+  const [ordersLoading, setOrdersLoading] = useState(false)
+  const [ordersError, setOrdersError] = useState<string | null>(null)
 
   const handleModeChange = (nextMode: FormMode) => {
     setMode(nextMode)
@@ -18,6 +48,44 @@ const AccountPage = () => {
     setFormError(null)
     clearError()
   }
+
+  useEffect(() => {
+    let ignore = false
+
+    if (!isAuthenticated) {
+      setOrders([])
+      setOrdersError(null)
+      setOrdersLoading(false)
+      return () => {
+        ignore = true
+      }
+    }
+
+    setOrdersLoading(true)
+    setOrdersError(null)
+
+    getUserOrders()
+      .then((orderList) => {
+        if (!ignore) {
+          setOrders(orderList)
+        }
+      })
+      .catch((err) => {
+        console.error('[AccountPage] Error cargando pedidos', err)
+        if (!ignore) {
+          setOrdersError('No pudimos cargar tus pedidos. Intenta nuevamente más tarde.')
+        }
+      })
+      .finally(() => {
+        if (!ignore) {
+          setOrdersLoading(false)
+        }
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [isAuthenticated, user?.id])
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -98,6 +166,68 @@ const AccountPage = () => {
                 <li>Acceder a promociones exclusivas para clientes registrados.</li>
               </ul>
             </aside>
+          </div>
+        </section>
+        <section className="section section--light">
+          <div className="container account-orders">
+            <div className="section__header">
+              <h2>Historial de compras</h2>
+            </div>
+            {ordersLoading ? (
+              <p className="muted">Cargando tus pedidos…</p>
+            ) : ordersError ? (
+              <p className="form-error">{ordersError}</p>
+            ) : orders.length === 0 ? (
+              <p className="muted">
+                Aún no has realizado compras. Tu historial aparecerá aquí una vez completes tu primer pedido.
+              </p>
+            ) : (
+              <ul className="orders-list">
+                {orders.map((order) => (
+                  <li key={order.id} className="order-card">
+                    <div className="order-card__header">
+                      <div>
+                        <h3>Pedido {order.code}</h3>
+                        <p className="muted">{formatOrderDate(order.submittedAt)}</p>
+                      </div>
+                      <span className={`order-status order-status--${order.status}`}>
+                        {STATUS_LABELS[order.status]}
+                      </span>
+                    </div>
+                    <div className="order-card__body">
+                      <dl className="order-card__meta">
+                        <div>
+                          <dt>Total</dt>
+                          <dd>{formatCurrency(order.total)}</dd>
+                        </div>
+                        <div>
+                          <dt>Envío</dt>
+                          <dd>
+                            {order.shippingOption?.label ?? 'Por definir'}
+                            {order.shippingCost > 0 ? ` · ${formatCurrency(order.shippingCost)}` : ''}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Pago</dt>
+                          <dd>{order.paymentMethod?.label ?? 'Por confirmar'}</dd>
+                        </div>
+                      </dl>
+                      <ul className="order-card__items">
+                        {order.items.map((item) => (
+                          <li key={`${order.id}-${item.product.id}`}>
+                            <span>
+                              {item.quantity} x {item.product.name}
+                            </span>
+                            <span>{formatCurrency(item.lineTotal)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      {order.notes && <p className="order-card__notes">Notas: {order.notes}</p>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </section>
       </div>

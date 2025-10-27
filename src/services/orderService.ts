@@ -1,24 +1,17 @@
-import type { OrderPayload } from '../types'
+import type { OrderPayload, OrderSummary } from '../types'
+import { request } from './apiClient'
 
-const webhookUrl = import.meta.env.VITE_ORDER_WEBHOOK_URL
-
-export const submitOrder = async (payload: OrderPayload) => {
-  if (!webhookUrl) {
-    console.info('VITE_ORDER_WEBHOOK_URL no configurado. Pedido en consola:', payload)
-    return { ok: true, fallback: true }
-  }
-
-  const response = await fetch(webhookUrl, {
+export const submitOrder = async (payload: OrderPayload): Promise<OrderSummary> => {
+  const result = await request<{ order: OrderSummary }>('/orders', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
     body: JSON.stringify(payload)
   })
+  return result.order
+}
 
-  if (!response.ok) {
-    throw new Error(`Error al enviar pedido: ${response.status}`)
-  }
-
-  return response.json().catch(() => ({ ok: true }))
+export const getUserOrders = async (): Promise<OrderSummary[]> => {
+  const result = await request<{ orders: OrderSummary[] }>('/orders', {
+    method: 'GET'
+  })
+  return Array.isArray(result.orders) ? result.orders : []
 }

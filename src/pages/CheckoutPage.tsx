@@ -1,16 +1,13 @@
 import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import type { CartItem } from '../types'
 import { useCart } from '../hooks/useCart'
 import { formatCurrency } from '../utils/format'
 import { paymentMethods, shippingOptions } from '../data/config'
 import { submitOrder } from '../services/orderService'
-import type { OrderPayload, OrderCustomer } from '../types'
+import type { OrderPayload, OrderCustomer, OrderSummary, OrderItemSummary } from '../types'
 import { trackEvent } from '../utils/analytics'
 import { useAuth } from '../hooks/useAuth'
-
-const generateOrderCode = () => `MAC-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 
 const CheckoutPage = () => {
   const { items, subtotal, clearCart } = useCart()
@@ -19,14 +16,27 @@ const CheckoutPage = () => {
   const [shippingId, setShippingId] = useState<string>('medellin')
   const [paymentId, setPaymentId] = useState<string>('contraentrega')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [orderCode, setOrderCode] = useState<string | null>(null)
-  const [orderItems, setOrderItems] = useState<CartItem[]>(items)
+  const [submittedOrder, setSubmittedOrder] = useState<OrderSummary | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   const shipping = useMemo(() => shippingOptions.find((option) => option.id === shippingId), [shippingId])
   const payment = useMemo(() => paymentMethods.find((method) => method.id === paymentId), [paymentId])
-
   const total = subtotal + (shipping?.price ?? 0)
+  const pendingSummaryItems: OrderItemSummary[] = useMemo(
+    () =>
+      items.map((item) => ({
+        product: {
+          id: item.product.id,
+          name: item.product.name,
+          price: item.product.price,
+          currency: item.product.currency
+        },
+        quantity: item.quantity,
+        unitPrice: item.product.price,
+        lineTotal: item.product.price * item.quantity
+      })),
+    [items]
+  )
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -47,34 +57,27 @@ const CheckoutPage = () => {
 
     setIsSubmitting(true)
     setSubmitError(null)
-    setOrderItems(items)
 
-    const code = generateOrderCode()
     const orderData: OrderPayload = {
-      code,
       customer,
-      paymentMethod: payment,
-      shippingOption: shipping,
-      items,
-      subtotal,
-      shippingCost: shipping?.price ?? 0,
-      total,
-      submittedAt: new Date().toISOString()
+      paymentMethodId: payment?.id ?? null,
+      shippingOptionId: shipping?.id ?? null,
+      items
     }
 
     try {
-      await submitOrder(orderData)
-      setOrderCode(code)
+      const order = await submitOrder(orderData)
+      setSubmittedOrder(order)
       clearCart()
       trackEvent('purchase', {
-        transaction_id: code,
-        value: total,
-        currency: 'COP',
-        shipping: shipping?.price ?? 0,
-        items: items.map((item) => ({
+        transaction_id: order.code,
+        value: order.total,
+        currency: order.currency,
+        shipping: order.shippingCost,
+        items: order.items.map((item) => ({
           item_id: item.product.id,
           item_name: item.product.name,
-          price: item.product.price,
+          price: item.unitPrice,
           quantity: item.quantity
         }))
       })
@@ -105,7 +108,7 @@ const CheckoutPage = () => {
     )
   }
 
-  if (items.length === 0 && !orderCode) {
+  if (items.length === 0 && !submittedOrder) {
     return (
       <div className="page">
         <section className="section">
@@ -120,9 +123,10 @@ const CheckoutPage = () => {
     )
   }
 
-  const summaryItems = orderCode ? orderItems : items
-  const summarySubtotal = summaryItems.reduce((acc, item) => acc + item.product.price * item.quantity, 0)
-  const summaryTotal = summarySubtotal + (shipping?.price ?? 0)
+  const summaryItems = submittedOrder ? submittedOrder.items : pendingSummaryItems
+  const summarySubtotal = submittedOrder ? submittedOrder.subtotal : subtotal
+  const summaryShipping = submittedOrder ? submittedOrder.shippingCost : shipping?.price ?? 0
+  const summaryTotal = submittedOrder ? submittedOrder.total : summarySubtotal + (summaryShipping ?? 0)
 
   return (
     <div className="page">
@@ -137,15 +141,22 @@ const CheckoutPage = () => {
       </section>
       <section className="section">
         <div className="container checkout-grid">
-          {orderCode ? (
+          {submittedOrder ? (
             <div className="order-success">
               <h2>¡Gracias! Tu pedido está en proceso.</h2>
               <p>
                 Nuestro equipo se comunicará contigo en las próximas horas para confirmar disponibilidad y pago.
                 Anota tu código de seguimiento:
               </p>
-              <div className="order-success__code">{orderCode}</div>
-              <p className="muted">Método de pago elegido: {payment?.label}</p>
+              <div className="order-success__code">{submittedOrder.code}</div>
+              <p className="muted">
+                Método de pago elegido:{' '}
+                {submittedOrder.paymentMethod?.label ?? 'A convenir con nuestro equipo comercial.'}
+              </p>
+              <p className="muted">
+                Modalidad de envío:{' '}
+                {submittedOrder.shippingOption?.label ?? 'Definiremos los detalles de entrega contigo.'}
+              </p>
               <button type="button" className="btn btn--primary" onClick={() => navigate('/productos')}>
                 Seguir explorando productos
               </button>
@@ -254,10 +265,10 @@ const CheckoutPage = () => {
                       <div>
                         <strong>{item.product.name}</strong>
                         <p className="muted">
-                          {item.quantity} x {formatCurrency(item.product.price)}
+                          {item.quantity} x {formatCurrency(item.unitPrice)}
                         </p>
                       </div>
-                      <span>{formatCurrency(item.product.price * item.quantity)}</span>
+                      <span>{formatCurrency(item.lineTotal)}</span>
                     </li>
                   ))}
                 </ul>
@@ -268,7 +279,9 @@ const CheckoutPage = () => {
                   </div>
                   <div>
                     <span>Envío</span>
-                    <strong>{shipping?.price ? formatCurrency(shipping.price) : 'A convenir'}</strong>
+                    <strong>
+                      {summaryShipping ? formatCurrency(summaryShipping) : 'A convenir con nuestro equipo'}
+                    </strong>
                   </div>
                   <div className="checkout-summary__total">
                     <span>Total estimado</span>
