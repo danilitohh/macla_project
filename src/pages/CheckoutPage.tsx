@@ -11,7 +11,7 @@ import { useAuth } from '../hooks/useAuth'
 
 const CheckoutPage = () => {
   const { items, subtotal, clearCart } = useCart()
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, isLoading } = useAuth()
   const navigate = useNavigate()
   const [shippingId, setShippingId] = useState<string>('medellin')
   const [paymentId, setPaymentId] = useState<string>('contraentrega')
@@ -87,6 +87,19 @@ const CheckoutPage = () => {
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="page">
+        <section className="section section--intro">
+          <div className="container">
+            <h1>Validando tu sesión…</h1>
+            <p>Estamos confirmando tu cuenta para continuar con el checkout.</p>
+          </div>
+        </section>
+      </div>
+    )
   }
 
   if (!isAuthenticated) {

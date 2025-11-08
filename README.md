@@ -29,6 +29,9 @@ La carpeta `server/` contiene una API Express + MySQL para manejar usuarios aute
 
 1. Copia `server/.env.example` a `server/.env` y ajusta las variables (asegúrate de contar con un servidor MySQL en ejecución):
    - `JWT_SECRET` y `JWT_EXPIRATION` para los tokens.
+   - `ACTIVATION_TOKEN_EXPIRES_MINUTES` y `PASSWORD_RESET_TOKEN_EXPIRES_MINUTES` para definir la caducidad (en minutos) de los códigos de activación y recuperación enviados al usuario.
+   - **Correo (SMTP)**: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_IGNORE_TLS`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`. Con estos valores configurados el backend usará Nodemailer para enviar los códigos de activación y recuperación a través de tu proveedor (Mailtrap, Gmail, Outlook, SendGrid SMTP, etc.).
+   - **SMS/WhatsApp (Twilio)**: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`. Si los defines, además del correo se enviará un mensaje de texto (o WhatsApp si tu número emisor está habilitado). Si no configuras Twilio el sistema caerá automáticamente en el envío por correo.
    - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` y `DB_CONNECTION_LIMIT` para la conexión a MySQL.  
      El usuario configurado debe tener permisos para crear la base de datos especificada en `DB_NAME` (el servidor inicializa el esquema automáticamente).
 2. Instala dependencias del frontend (`npm install`) y, por única vez, las del servidor:
@@ -39,6 +42,10 @@ La carpeta `server/` contiene una API Express + MySQL para manejar usuarios aute
    ```bash
    npm run server   # Ejecuta node server/index.js (puerto 4000 por defecto)
    ```
+   Si además quieres servir la aplicación React desde el mismo servidor Express (http://localhost:4000), ejecuta antes:
+    ```bash
+    npm run build   # Genera la carpeta dist consumida por el backend
+    ```
 3. En otra terminal inicia el frontend:
    ```bash
    npm run dev
@@ -58,9 +65,14 @@ Al iniciar el servidor se insertan/actualizan los datos iniciales de catálogo, 
 > Nota: Si vienes de una versión previa que usaba la tabla `carts`, los datos continúan disponibles, pero el API ahora trabaja sobre `shopping_carts` y `shopping_cart_items`.
 
 ### Endpoints relevantes
-- `POST /api/auth/register` – Registra usuario (body: `{ name, email, password }`).
+- `POST /api/auth/register` – Registra usuario (ahora deja la cuenta en estado pendiente hasta que se valide el código enviado por correo/SMS).
+- `POST /api/auth/activate` – Confirma la cuenta con código numérico o token.
+- `POST /api/auth/resend-activation` – Genera un nuevo código para usuarios pendientes.
 - `POST /api/auth/login` – Inicia sesión y entrega token JWT.
+- `POST /api/auth/recover` – Envía código/token para restablecer contraseña (correo o teléfono).
+- `POST /api/auth/reset-password` – Valida el código y actualiza la contraseña.
 - `GET /api/auth/profile` – Obtiene datos del usuario autenticado.
+- `PUT /api/profile` – Actualiza nombre, teléfono, ciudad y dirección del usuario autenticado.
 - `GET /api/cart` – Recupera los items guardados del carrito.
 - `PUT /api/cart` – Persiste el carrito para el usuario.
 - `GET /api/admin/stats` – Resumen de usuarios, pedidos y carritos (requiere usuario con `role = 'admin'`).

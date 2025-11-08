@@ -89,6 +89,10 @@ const createSchemaIfNeeded = async () => {
         name VARCHAR(255) NOT NULL,
         email VARCHAR(255) NOT NULL UNIQUE,
         password_hash VARCHAR(255) NOT NULL,
+        phone VARCHAR(50) NULL,
+        city VARCHAR(255) NULL,
+        address_line TEXT NULL,
+        email_verified_at DATETIME(3) NULL,
         created_at DATETIME(3) NOT NULL,
         updated_at DATETIME(3) NOT NULL,
         INDEX idx_users_email (email)
@@ -396,6 +400,25 @@ const createSchemaIfNeeded = async () => {
           ON UPDATE CASCADE ON DELETE SET NULL,
         INDEX idx_invoice_items_invoice (invoice_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS user_verification_tokens (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id CHAR(36) NOT NULL,
+        type ENUM('activation','password_reset') NOT NULL,
+        token_hash CHAR(64) NOT NULL,
+        code VARCHAR(10) NULL,
+        channel ENUM('email','sms') NOT NULL DEFAULT 'email',
+        expires_at DATETIME(3) NOT NULL,
+        consumed_at DATETIME(3) NULL,
+        metadata_json LONGTEXT NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT fk_user_tokens_user FOREIGN KEY (user_id) REFERENCES users(id)
+          ON UPDATE CASCADE ON DELETE CASCADE,
+        INDEX idx_user_tokens_user (user_id),
+        INDEX idx_user_tokens_lookup (user_id, type, expires_at, consumed_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `
   ]
 
@@ -421,6 +444,18 @@ const ensureSchemaUpgrades = async (localPool) => {
   }
   if (!(await columnExists(localPool, 'users', 'last_login_at'))) {
     await localPool.execute('ALTER TABLE users ADD COLUMN last_login_at DATETIME(3) NULL AFTER updated_at')
+  }
+  if (!(await columnExists(localPool, 'users', 'phone'))) {
+    await localPool.execute('ALTER TABLE users ADD COLUMN phone VARCHAR(50) NULL AFTER password_hash')
+  }
+  if (!(await columnExists(localPool, 'users', 'city'))) {
+    await localPool.execute('ALTER TABLE users ADD COLUMN city VARCHAR(255) NULL AFTER phone')
+  }
+  if (!(await columnExists(localPool, 'users', 'address_line'))) {
+    await localPool.execute('ALTER TABLE users ADD COLUMN address_line TEXT NULL AFTER city')
+  }
+  if (!(await columnExists(localPool, 'users', 'email_verified_at'))) {
+    await localPool.execute('ALTER TABLE users ADD COLUMN email_verified_at DATETIME(3) NULL AFTER address_line')
   }
 
   if (!(await columnExists(localPool, 'orders', 'cart_id'))) {
@@ -464,6 +499,28 @@ const ensureSchemaUpgrades = async (localPool) => {
       'ALTER TABLE order_items ADD COLUMN product_snapshot_json LONGTEXT NULL AFTER line_total_cents'
     )
   }
+
+  await localPool.execute(
+    `
+      CREATE TABLE IF NOT EXISTS user_verification_tokens (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id CHAR(36) NOT NULL,
+        type ENUM('activation','password_reset') NOT NULL,
+        token_hash CHAR(64) NOT NULL,
+        code VARCHAR(10) NULL,
+        channel ENUM('email','sms') NOT NULL DEFAULT 'email',
+        expires_at DATETIME(3) NOT NULL,
+        consumed_at DATETIME(3) NULL,
+        metadata_json LONGTEXT NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT fk_user_tokens_user FOREIGN KEY (user_id) REFERENCES users(id)
+          ON UPDATE CASCADE ON DELETE CASCADE,
+        INDEX idx_user_tokens_user (user_id),
+        INDEX idx_user_tokens_lookup (user_id, type, expires_at, consumed_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `
+  )
 }
 
 const seedInitialData = async () => {

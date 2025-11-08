@@ -14,6 +14,7 @@ import PoliciesPage from './pages/PoliciesPage'
 import TermsPage from './pages/TermsPage'
 import NotFound from './pages/NotFound'
 import AccountPage from './pages/AccountPage'
+import ProtectedRoute from './components/ProtectedRoute'
 
 function App() {
   return (
@@ -27,7 +28,14 @@ function App() {
           <Route path="/productos" element={<Products />} />
           <Route path="/producto/:id" element={<ProductDetail />} />
           <Route path="/carrito" element={<CartPage />} />
-          <Route path="/checkout" element={<CheckoutPage />} />
+          <Route
+            path="/checkout"
+            element={
+              <ProtectedRoute loadingMessage="Abriendo tu checkout…">
+                <CheckoutPage />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/cuenta" element={<AccountPage />} />
           <Route path="/nosotros" element={<AboutPage />} />
           <Route path="/faq" element={<FAQPage />} />

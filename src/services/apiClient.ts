@@ -32,6 +32,7 @@ export const clearToken = (): void => {
 
 interface ApiErrorPayload {
   message?: string
+  [key: string]: unknown
 }
 
 export const request = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
@@ -60,7 +61,10 @@ export const request = async <T>(path: string, options: RequestInit = {}): Promi
     if (response.status === 401) {
       clearToken()
     }
-    throw new Error(errorMessage)
+    const error = new Error(errorMessage) as Error & { status?: number; data?: ApiErrorPayload | null }
+    error.status = response.status
+    error.data = payload
+    throw error
   }
 
   return (payload as T) ?? (undefined as T)

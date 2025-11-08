@@ -29,6 +29,10 @@ export interface User {
   id: string
   name: string
   email: string
+  phone?: string | null
+  city?: string | null
+  address?: string | null
+  emailVerified?: boolean
 }
 
 export interface ShippingOption {

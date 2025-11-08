@@ -1061,9 +1061,19 @@ textarea {
     grid-template-columns: 1fr;
   }
 
-  .checkout-grid {
-    grid-template-columns: 1fr;
-  }
+.checkout-grid {
+  grid-template-columns: 1fr;
+}
+}
+
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
 }
 
 @media (max-width: 640px) {

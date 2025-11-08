@@ -8,15 +8,103 @@ export interface Credentials {
 
 export interface RegistrationPayload extends Credentials {
   name: string
+  phone?: string
+  city?: string
+  address?: string
+  channel?: 'email' | 'sms'
+}
+
+export interface RegistrationResponse {
+  requiresActivation: boolean
+  message: string
+  email: string
+  userId: string
+  channel: 'email' | 'sms'
+  debug?: ActivationDebug | null
+}
+
+export interface ActivationDebug {
+  token: string
+  code: string
+  expiresAt: string
+  channel: 'email' | 'sms'
+}
+
+export interface ActivationPayload {
+  email: string
+  token?: string
+  code?: string
+}
+
+export interface RecoveryRequestPayload {
+  email?: string
+  phone?: string
+  channel?: 'email' | 'sms'
+}
+
+export interface ResetPasswordPayload extends ActivationPayload {
+  password: string
+}
+
+export interface ProfileUpdatePayload {
+  name: string
+  phone?: string
+  city?: string
+  address?: string
 }
 
 export const GUEST_CART_KEY = 'macla-guest-cart'
 const isBrowser = typeof window !== 'undefined'
 
-export const registerUser = async ({ name, email, password }: RegistrationPayload): Promise<User> => {
-  const result = await request<{ token: string; user: User }>('/auth/register', {
+export const registerUser = async (payload: RegistrationPayload): Promise<RegistrationResponse> => {
+  const result = await request<RegistrationResponse>('/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ name, email, password })
+    body: JSON.stringify(payload)
+  })
+  return result
+}
+
+export const activateAccount = async (payload: ActivationPayload) => {
+  const result = await request<{ token?: string; user?: User; alreadyActive?: boolean }>('/auth/activate', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+  if (result.token && result.user) {
+    persistToken(result.token)
+  }
+  return result
+}
+
+export interface ResendActivationResponse {
+  message: string
+  channel: string
+  debug?: ActivationDebug | null
+}
+
+export interface RecoveryResponse {
+  message: string
+  channel: string
+  debug?: ActivationDebug | null
+}
+
+export const resendActivation = async (email: string) => {
+  return request<ResendActivationResponse>('/auth/resend-activation', {
+    method: 'POST',
+    body: JSON.stringify({ email })
+  })
+}
+
+export const requestPasswordReset = async (payload: RecoveryRequestPayload) => {
+  return request<RecoveryResponse>('/auth/recover', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+
+export const resetPassword = async (payload: ResetPasswordPayload) => {
+  const result = await request<{ token: string; user: User }>('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify(payload)
   })
   persistToken(result.token)
   return result.user
@@ -49,6 +137,14 @@ export const getActiveUser = async (): Promise<User | null> => {
     console.warn('[authService] Error recuperando sesión:', error)
     return null
   }
+}
+
+export const updateUserProfile = async (payload: ProfileUpdatePayload): Promise<User> => {
+  const result = await request<{ user: User }>('/profile', {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  })
+  return result.user
 }
 
 export const getUserCart = async (): Promise<CartItem[]> => {

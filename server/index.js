@@ -1,4 +1,8 @@
-require('dotenv').config()
+const path = require('path')
+const fs = require('fs')
+
+const envPath = path.join(__dirname, '.env')
+require('dotenv').config(fs.existsSync(envPath) ? { path: envPath } : undefined)
 
 const express = require('express')
 const cors = require('cors')
@@ -6,13 +10,16 @@ const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const crypto = require('crypto')
 const { initDatabase, query, getPool } = require('./db')
+const { sendVerificationNotification } = require('./notifications')
 
 const app = express()
 
 const PORT = process.env.PORT || 4000
 const JWT_SECRET = process.env.JWT_SECRET || 'macla-dev-secret'
 const TOKEN_EXPIRATION = process.env.JWT_EXPIRATION || '7d'
-const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173']
+const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:4000']
+const CLIENT_DIST_PATH = path.join(__dirname, '..', 'dist')
+const CLIENT_INDEX_PATH = path.join(CLIENT_DIST_PATH, 'index.html')
 
 const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',').map((origin) => origin.trim())
@@ -72,13 +79,104 @@ const generateOrderCode = () => {
   return `MAC-${random.slice(0, 8)}`
 }
 
+const TOKEN_CONFIG = {
+  activation: Number(process.env.ACTIVATION_TOKEN_EXPIRES_MINUTES || 30),
+  password_reset: Number(process.env.PASSWORD_RESET_TOKEN_EXPIRES_MINUTES || 15)
+}
+
+const hashToken = (value) => crypto.createHash('sha256').update(value).digest('hex')
+const generateRawToken = () => crypto.randomBytes(32).toString('hex')
+const generateNumericCode = () => {
+  const code = Math.floor(100000 + Math.random() * 900000)
+  return String(code)
+}
+const addMinutes = (date, minutes) => new Date(date.getTime() + minutes * 60000)
+const sanitizePhone = (value = '') => String(value).replace(/[^\d+]/g, '').slice(0, 20)
+
+const createVerificationToken = async ({ userId, type, channel = 'email', metadata = null }) => {
+  const now = new Date()
+  const expiresMinutes = TOKEN_CONFIG[type] && Number.isFinite(TOKEN_CONFIG[type]) ? TOKEN_CONFIG[type] : 15
+  const expiresDate = addMinutes(now, expiresMinutes)
+  const token = generateRawToken()
+  const code = generateNumericCode()
+  const tokenHash = hashToken(token)
+  const payload = metadata ? JSON.stringify(metadata) : null
+  const nowSql = formatDateForSql(now)
+  const expiresSql = formatDateForSql(expiresDate)
+
+  await query(SQL.invalidateTokensByType, [nowSql, nowSql, userId, type])
+  await query(SQL.insertVerificationToken, [
+    userId,
+    type,
+    tokenHash,
+    code,
+    channel,
+    expiresSql,
+    payload,
+    nowSql,
+    nowSql
+  ])
+
+  return {
+    token,
+    code,
+    expiresAt: expiresDate.toISOString(),
+    channel
+  }
+}
+
+const validateVerificationToken = async ({ userId, type, token, code }) => {
+  if (!token && !code) {
+    return null
+  }
+  const now = new Date()
+  const nowSql = formatDateForSql(now)
+  const hashedToken = token ? hashToken(token) : null
+  const [rows] = await query(SQL.findTokenForValidation, [
+    userId,
+    type,
+    nowSql,
+    hashedToken,
+    token || null,
+    code || null,
+    code || null
+  ])
+  const record = rows[0]
+  if (!record) {
+    return null
+  }
+  await query(SQL.consumeTokenById, [nowSql, nowSql, record.id])
+  return record
+}
+
 const SQL = {
-  userByEmail: 'SELECT id, name, email, password_hash, role, is_active FROM users WHERE email = ?',
-  userForAuth: 'SELECT id, name, email, role, is_active FROM users WHERE id = ?',
-  insertUser:
-    "INSERT INTO users (id, name, email, password_hash, is_active, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  userByEmail:
+    'SELECT id, name, email, password_hash, role, is_active, phone, city, address_line, email_verified_at FROM users WHERE email = ?',
+  userByPhone:
+    'SELECT id, name, email, password_hash, role, is_active, phone, city, address_line, email_verified_at FROM users WHERE phone = ?',
+  userForAuth:
+    'SELECT id, name, email, role, is_active, phone, city, address_line, email_verified_at FROM users WHERE id = ?',
+  insertUser: `
+    INSERT INTO users (
+      id,
+      name,
+      email,
+      password_hash,
+      phone,
+      city,
+      address_line,
+      email_verified_at,
+      is_active,
+      role,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
   updateUserLogin: 'UPDATE users SET updated_at = ?, last_login_at = ? WHERE id = ?',
-  userProfileById: 'SELECT id, name, email, role, created_at, updated_at FROM users WHERE id = ?',
+  userProfileById:
+    'SELECT id, name, email, role, phone, city, address_line, email_verified_at, created_at, updated_at FROM users WHERE id = ?',
+  updateUserProfile: 'UPDATE users SET name = ?, phone = ?, city = ?, address_line = ?, updated_at = ? WHERE id = ?',
   findActiveCart: `
     SELECT id, status, total_items, total_cents, currency
     FROM shopping_carts
@@ -233,14 +331,55 @@ const SQL = {
     FROM order_items
     WHERE order_id = ?
     ORDER BY id
-  `
+  `,
+  insertVerificationToken: `
+    INSERT INTO user_verification_tokens (
+      user_id,
+      type,
+      token_hash,
+      code,
+      channel,
+      expires_at,
+      metadata_json,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+  invalidateTokensByType: `
+    UPDATE user_verification_tokens
+    SET consumed_at = ?, updated_at = ?
+    WHERE user_id = ?
+      AND type = ?
+      AND consumed_at IS NULL
+  `,
+  findTokenForValidation: `
+    SELECT *
+    FROM user_verification_tokens
+    WHERE user_id = ?
+      AND type = ?
+      AND consumed_at IS NULL
+      AND expires_at > ?
+      AND (
+        (token_hash = ? AND ? IS NOT NULL)
+        OR (code = ? AND ? IS NOT NULL)
+      )
+    ORDER BY created_at DESC
+    LIMIT 1
+  `,
+  consumeTokenById: 'UPDATE user_verification_tokens SET consumed_at = ?, updated_at = ? WHERE id = ?',
+  deleteExpiredTokens: 'DELETE FROM user_verification_tokens WHERE expires_at < ?'
 }
 
 const toUserDto = (row) => ({
   id: row.id,
   name: row.name,
   email: row.email,
-  role: row.role || 'customer'
+  role: row.role || 'customer',
+  phone: row.phone || null,
+  city: row.city || null,
+  address: row.address_line || null,
+  emailVerified: Boolean(row.email_verified_at)
 })
 
 const issueToken = (userId) =>
@@ -329,6 +468,11 @@ app.post('/api/auth/register', async (req, res, next) => {
     const name = sanitizeName(req.body.name)
     const email = normalizeEmail(req.body.email)
     const password = String(req.body.password || '')
+    const phone = sanitizePhone(req.body.phone)
+    const city = sanitizeText(req.body.city)
+    const address = sanitizeText(req.body.address)
+    const preferredChannelRaw = String(req.body.channel || '').toLowerCase()
+    const activationChannel = preferredChannelRaw === 'sms' && phone ? 'sms' : 'email'
 
     if (!name) {
       return res.status(400).json({ message: 'El nombre es obligatorio.' })
@@ -352,12 +496,268 @@ app.post('/api/auth/register', async (req, res, next) => {
         ? crypto.randomUUID()
         : crypto.randomBytes(16).toString('hex')
 
-    await query(SQL.insertUser, [id, name, email, passwordHash, 1, 'customer', now, now])
+    await query(SQL.insertUser, [
+      id,
+      name,
+      email,
+      passwordHash,
+      phone || null,
+      city || null,
+      address || null,
+      null,
+      0,
+      'customer',
+      now,
+      now
+    ])
 
-    const token = issueToken(id)
+    const activation = await createVerificationToken({
+      userId: id,
+      type: 'activation',
+      channel: activationChannel,
+      metadata: { email, phone: phone || null }
+    })
+
+    sendVerificationNotification({
+      type: 'activation',
+      code: activation.code,
+      token: activation.token,
+      email,
+      phone: phone || null,
+      channel: activationChannel
+    }).catch((notifyError) => {
+      console.error('[auth] Error enviando activación:', notifyError)
+    })
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.info('[auth] Activación generada', {
+        email,
+        channel: activationChannel,
+        token: activation.token,
+        code: activation.code
+      })
+    }
+
     return res.status(201).json({
+      requiresActivation: true,
+      userId: id,
+      email,
+      channel: activationChannel,
+      message: 'Tu cuenta fue creada. Revisa el correo o SMS para activar el acceso.',
+      debug: process.env.NODE_ENV === 'production' ? undefined : activation
+    })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.post('/api/auth/activate', async (req, res, next) => {
+  try {
+    const email = normalizeEmail(req.body.email)
+    const token = String(req.body.token || '').trim() || null
+    const code = String(req.body.code || '').trim() || null
+
+    if (!email) {
+      return res.status(400).json({ message: 'Debes indicar el correo de la cuenta.' })
+    }
+    if (!token && !code) {
+      return res.status(400).json({ message: 'Ingresa el código o token recibido.' })
+    }
+
+    const [userRows] = await query(SQL.userByEmail, [email])
+    const user = userRows[0]
+    if (!user) {
+      return res.status(404).json({ message: 'No encontramos una cuenta con este correo.' })
+    }
+    if (user.is_active === 1) {
+      return res.json({ alreadyActive: true, message: 'La cuenta ya estaba activada.' })
+    }
+
+    const verification = await validateVerificationToken({
+      userId: user.id,
+      type: 'activation',
       token,
-      user: { id, name, email, role: 'customer' }
+      code
+    })
+
+    if (!verification) {
+      return res.status(400).json({ message: 'El código ingresado no es válido o ya expiró.' })
+    }
+
+    const nowSql = formatDateForSql(new Date())
+    await query(
+      'UPDATE users SET is_active = 1, email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?',
+      [nowSql, nowSql, user.id]
+    )
+
+    const [profileRows] = await query(SQL.userProfileById, [user.id])
+    const profile = profileRows[0] || user
+    const jwtToken = issueToken(user.id)
+    return res.json({
+      token: jwtToken,
+      user: toUserDto({ ...profile, is_active: 1 })
+    })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.post('/api/auth/resend-activation', async (req, res, next) => {
+  try {
+    const email = normalizeEmail(req.body.email)
+    if (!email) {
+      return res.status(400).json({ message: 'Debes ingresar el correo registrado.' })
+    }
+    const [userRows] = await query(SQL.userByEmail, [email])
+    const user = userRows[0]
+    if (!user) {
+      return res.json({ message: 'Si la cuenta existe, enviaremos un nuevo código.' })
+    }
+    if (user.is_active === 1) {
+      return res.json({ message: 'Tu cuenta ya está activa. Inicia sesión normalmente.' })
+    }
+
+    const channel = user.phone ? 'sms' : 'email'
+    const activation = await createVerificationToken({
+      userId: user.id,
+      type: 'activation',
+      channel,
+      metadata: { email: user.email, phone: user.phone || null }
+    })
+
+    sendVerificationNotification({
+      type: 'activation',
+      code: activation.code,
+      token: activation.token,
+      email: user.email,
+      phone: user.phone || null,
+      channel
+    }).catch((notifyError) => {
+      console.error('[auth] Error reenviando activación:', notifyError)
+    })
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.info('[auth] Reenvío de activación', {
+        email,
+        channel,
+        token: activation.token,
+        code: activation.code
+      })
+    }
+
+    return res.json({
+      message: 'Generamos un nuevo código de activación.',
+      channel,
+      debug: process.env.NODE_ENV === 'production' ? undefined : activation
+    })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.post('/api/auth/recover', async (req, res, next) => {
+  try {
+    const email = normalizeEmail(req.body.email || req.body.identifier || '')
+    const phone = sanitizePhone(req.body.phone || req.body.identifier || '')
+    const requestedChannel = String(req.body.channel || '').toLowerCase()
+
+    if (!email && !phone) {
+      return res.status(400).json({ message: 'Ingresa el correo o teléfono asociado a tu cuenta.' })
+    }
+
+    let user = null
+    if (email) {
+      const [rows] = await query(SQL.userByEmail, [email])
+      user = rows[0] || null
+    }
+    if (!user && phone) {
+      const [rows] = await query(SQL.userByPhone, [phone])
+      user = rows[0] || null
+    }
+
+    if (!user) {
+      return res.json({ message: 'Si encontramos tu cuenta, enviaremos instrucciones de recuperación.' })
+    }
+
+    const channel = requestedChannel === 'sms' && user.phone ? 'sms' : 'email'
+    const resetToken = await createVerificationToken({
+      userId: user.id,
+      type: 'password_reset',
+      channel,
+      metadata: { email: user.email, phone: user.phone || null }
+    })
+
+    sendVerificationNotification({
+      type: 'password_reset',
+      code: resetToken.code,
+      token: resetToken.token,
+      email: user.email,
+      phone: user.phone || null,
+      channel
+    }).catch((notifyError) => {
+      console.error('[auth] Error enviando recuperación:', notifyError)
+    })
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.info('[auth] Recuperación solicitada', {
+        email: user.email,
+        channel,
+        token: resetToken.token,
+        code: resetToken.code
+      })
+    }
+
+    return res.json({
+      message: 'Si encontramos tu cuenta, enviamos los pasos para restablecer tu contraseña.',
+      channel,
+      debug: process.env.NODE_ENV === 'production' ? undefined : resetToken
+    })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.post('/api/auth/reset-password', async (req, res, next) => {
+  try {
+    const email = normalizeEmail(req.body.email)
+    const token = String(req.body.token || '').trim() || null
+    const code = String(req.body.code || '').trim() || null
+    const password = String(req.body.password || '')
+
+    if (!email || password.length < 6) {
+      return res.status(400).json({ message: 'Debes ingresar correo y una contraseña válida (mínimo 6 caracteres).' })
+    }
+    if (!token && !code) {
+      return res.status(400).json({ message: 'Ingresa el código o token recibido para continuar.' })
+    }
+
+    const [userRows] = await query(SQL.userByEmail, [email])
+    const user = userRows[0]
+    if (!user) {
+      return res.status(404).json({ message: 'No encontramos una cuenta con este correo.' })
+    }
+
+    const verification = await validateVerificationToken({
+      userId: user.id,
+      type: 'password_reset',
+      token,
+      code
+    })
+
+    if (!verification) {
+      return res.status(400).json({ message: 'El código ingresado no es válido o ya expiró.' })
+    }
+
+    const passwordHash = bcrypt.hashSync(password, 10)
+    const nowSql = formatDateForSql(new Date())
+    await query('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?', [passwordHash, nowSql, user.id])
+
+    const [profileRows] = await query(SQL.userProfileById, [user.id])
+    const profile = profileRows[0] || user
+    const jwtToken = issueToken(user.id)
+    return res.json({
+      token: jwtToken,
+      user: toUserDto(profile)
     })
   } catch (error) {
     return next(error)
@@ -379,7 +779,10 @@ app.post('/api/auth/login', async (req, res, next) => {
       return res.status(401).json({ message: 'Credenciales inválidas.' })
     }
     if (user.is_active === 0) {
-      return res.status(403).json({ message: 'La cuenta está inactiva. Contacta al administrador.' })
+      return res.status(403).json({
+        message: 'Tu cuenta aún no está activada. Revisa tu correo o solicita un nuevo código.',
+        requiresActivation: true
+      })
     }
 
     const isValid = bcrypt.compareSync(password, user.password_hash)
@@ -407,6 +810,28 @@ app.get('/api/auth/profile', requireAuth, async (req, res, next) => {
     if (!user) {
       return res.status(404).json({ message: 'Usuario no encontrado.' })
     }
+    return res.json({ user: toUserDto(user) })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.put('/api/profile', requireAuth, async (req, res, next) => {
+  try {
+    const name = sanitizeName(req.body.name)
+    const phone = sanitizePhone(req.body.phone)
+    const city = sanitizeText(req.body.city)
+    const address = sanitizeText(req.body.address)
+
+    if (!name) {
+      return res.status(400).json({ message: 'El nombre es obligatorio.' })
+    }
+
+    const nowSql = formatDateForSql(new Date())
+    await query(SQL.updateUserProfile, [name, phone || null, city || null, address || null, nowSql, req.userId])
+
+    const [rows] = await query(SQL.userProfileById, [req.userId])
+    const user = rows[0]
     return res.json({ user: toUserDto(user) })
   } catch (error) {
     return next(error)
@@ -951,6 +1376,27 @@ app.get('/api/admin/carts/:cartId', requireAuth, requireAdmin, async (req, res, 
     return next(error)
   }
 })
+
+let canServeClient = false
+try {
+  canServeClient = fs.existsSync(CLIENT_DIST_PATH) && fs.existsSync(CLIENT_INDEX_PATH)
+} catch (_error) {
+  canServeClient = false
+}
+
+if (canServeClient) {
+  app.use(express.static(CLIENT_DIST_PATH))
+  app.get(/^(?!\/api).*$/, (req, res, next) => {
+    if (req.method.toUpperCase() !== 'GET') {
+      return next()
+    }
+    return res.sendFile(CLIENT_INDEX_PATH)
+  })
+} else {
+  console.warn(
+    `[server] Build de frontend no encontrado en ${CLIENT_DIST_PATH}. Ejecuta "npm run build" en la raíz para servir la app desde Express.`
+  )
+}
 
 app.use((err, _req, res, _next) => {
   console.error('[server] error:', err)
