@@ -661,7 +661,7 @@ const AccountPage = () => {
                 <>
                   <label>
                     Nombre completo
-                    <input type="text" name="name" placeholder="María Clara" required />
+                    <input type="text" name="name" placeholder="Nombre completo" required />
                   </label>
                   <label>
                     Teléfono
