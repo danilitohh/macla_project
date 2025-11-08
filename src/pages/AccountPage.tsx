@@ -686,13 +686,12 @@ const AccountPage = () => {
                 <input type="password" name="password" placeholder="Mínimo 6 caracteres" minLength={6} required />
               </label>
               {tabMode === 'register' && (
-                <label>
-                  ¿Cómo prefieres recibir el código?
-                  <select name="channel" defaultValue="email">
-                    <option value="email">Correo electrónico</option>
-                    <option value="sms">SMS / WhatsApp</option>
-                  </select>
-                </label>
+                  <label>
+                    ¿Cómo prefieres recibir el código?
+                    <select name="channel" defaultValue="email">
+                      <option value="email">Correo electrónico</option>
+                    </select>
+                  </label>
               )}
               {tabMode === 'register' && (
                 <label className="checkbox">
@@ -740,7 +739,6 @@ const AccountPage = () => {
                 ¿Cómo quieres recibir el código?
                 <select name="recoveryChannel" defaultValue="email">
                   <option value="email">Correo electrónico</option>
-                  <option value="sms">SMS / WhatsApp</option>
                 </select>
               </label>
               {formError && <p className="form-error">{formError}</p>}
