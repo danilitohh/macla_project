@@ -686,14 +686,6 @@ const AccountPage = () => {
                 <input type="password" name="password" placeholder="Mínimo 6 caracteres" minLength={6} required />
               </label>
               {tabMode === 'register' && (
-                  <label>
-                    ¿Cómo prefieres recibir el código?
-                    <select name="channel" defaultValue="email">
-                      <option value="email">Correo electrónico</option>
-                    </select>
-                  </label>
-              )}
-              {tabMode === 'register' && (
                 <label className="checkbox">
                   <input type="checkbox" name="acceptPolicies" required />
                   <span>
@@ -735,12 +727,7 @@ const AccountPage = () => {
                 Teléfono
                 <input type="tel" name="recoveryPhone" placeholder="300 000 0000" />
               </label>
-              <label>
-                ¿Cómo quieres recibir el código?
-                <select name="recoveryChannel" defaultValue="email">
-                  <option value="email">Correo electrónico</option>
-                </select>
-              </label>
+              <input type="hidden" name="recoveryChannel" value="email" />
               {formError && <p className="form-error">{formError}</p>}
               {error && <p className="form-error">{error}</p>}
               {successMessage && <p className="form-success">{successMessage}</p>}
