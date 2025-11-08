@@ -80,6 +80,7 @@ const AccountPage = () => {
     city: user?.city ?? '',
     address: user?.address ?? ''
   })
+  const [showProfileForm, setShowProfileForm] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
   const redirectPath = (location.state as { from?: string } | null)?.from ?? null
@@ -101,6 +102,7 @@ const AccountPage = () => {
         city: user.city ?? '',
         address: user.address ?? ''
       })
+      setShowProfileForm(false)
     }
   }, [user])
 
@@ -395,6 +397,12 @@ const AccountPage = () => {
     setProfileValues((prev) => ({ ...prev, [name]: value }))
   }
 
+  const toggleProfileForm = () => {
+    setFormError(null)
+    setProfileMessage(null)
+    setShowProfileForm((prev) => !prev)
+  }
+
   const handleProfileSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!profileValues.name.trim()) {
@@ -477,6 +485,9 @@ const AccountPage = () => {
                 <button type="button" className="btn btn--ghost" onClick={logout}>
                   Cerrar sesión
                 </button>
+                <button type="button" className="btn btn--ghost" onClick={toggleProfileForm}>
+                  {showProfileForm ? 'Ocultar formulario' : 'Actualizar mis datos'}
+                </button>
               </div>
             </div>
             <aside className="account-card__help">
@@ -489,60 +500,62 @@ const AccountPage = () => {
             </aside>
           </div>
         </section>
-        <section className="section">
-          <div className="container account-form">
-            <div className="account-form__panel">
-              <h2>Actualiza tu información</h2>
-              <form onSubmit={handleProfileSubmit} className="account-form__panel">
-                <label>
-                  Nombre completo
-                  <input
-                    type="text"
-                    name="name"
-                    value={profileValues.name}
-                    onChange={handleProfileInputChange}
-                    required
-                  />
-                </label>
-                <label>
-                  Teléfono
-                  <input
-                    type="tel"
-                    name="phone"
-                    value={profileValues.phone}
-                    onChange={handleProfileInputChange}
-                    placeholder="300 000 0000"
-                  />
-                </label>
-                <label>
-                  Ciudad
-                  <input
-                    type="text"
-                    name="city"
-                    value={profileValues.city}
-                    onChange={handleProfileInputChange}
-                    placeholder="Medellín"
-                  />
-                </label>
-                <label className="form-grid--full">
-                  Dirección
-                  <textarea
-                    name="address"
-                    rows={2}
-                    value={profileValues.address}
-                    onChange={handleProfileInputChange}
-                    placeholder="Carrera 00 #00-00"
-                  />
-                </label>
-                {profileMessage && <p className="form-success">{profileMessage}</p>}
-                {formError && <p className="form-error">{formError}</p>}
-                <button type="submit" className="btn btn--primary" disabled={profileSubmitting}>
-                  {profileSubmitting ? 'Guardando…' : 'Guardar cambios'}
-                </button>
-              </form>
+        {showProfileForm && (
+          <section className="section">
+            <div className="container account-form">
+              <div className="account-form__panel">
+                <h2>Actualiza tu información</h2>
+                <form onSubmit={handleProfileSubmit} className="account-form__panel">
+                  <label>
+                    Nombre completo
+                    <input
+                      type="text"
+                      name="name"
+                      value={profileValues.name}
+                      onChange={handleProfileInputChange}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Teléfono
+                    <input
+                      type="tel"
+                      name="phone"
+                      value={profileValues.phone}
+                      onChange={handleProfileInputChange}
+                      placeholder="300 000 0000"
+                    />
+                  </label>
+                  <label>
+                    Ciudad
+                    <input
+                      type="text"
+                      name="city"
+                      value={profileValues.city}
+                      onChange={handleProfileInputChange}
+                      placeholder="Medellín"
+                    />
+                  </label>
+                  <label className="form-grid--full">
+                    Dirección
+                    <textarea
+                      name="address"
+                      rows={2}
+                      value={profileValues.address}
+                      onChange={handleProfileInputChange}
+                      placeholder="Carrera 00 #00-00"
+                    />
+                  </label>
+                  {profileMessage && <p className="form-success">{profileMessage}</p>}
+                  {formError && <p className="form-error">{formError}</p>}
+                  <button type="submit" className="btn btn--primary" disabled={profileSubmitting}>
+                    {profileSubmitting ? 'Guardando…' : 'Guardar cambios'}
+                  </button>
+                </form>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
         <section className="section section--light">
           <div className="container account-orders">
             <div className="section__header">
