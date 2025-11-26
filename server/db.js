@@ -294,6 +294,7 @@ const createSchemaIfNeeded = async () => {
         shipping_option_id VARCHAR(64) NULL,
         subtotal_cents INT UNSIGNED NOT NULL,
         shipping_cost_cents INT UNSIGNED NOT NULL,
+        discount_cents INT UNSIGNED NOT NULL DEFAULT 0,
         total_cents INT UNSIGNED NOT NULL,
         currency CHAR(3) NOT NULL DEFAULT 'COP',
         status ENUM('pending','paid','shipped','cancelled') NOT NULL DEFAULT 'pending',
@@ -463,6 +464,11 @@ const ensureSchemaUpgrades = async (localPool) => {
   }
   if (!(await columnExists(localPool, 'orders', 'currency'))) {
     await localPool.execute("ALTER TABLE orders ADD COLUMN currency CHAR(3) NOT NULL DEFAULT 'COP' AFTER total_cents")
+  }
+  if (!(await columnExists(localPool, 'orders', 'discount_cents'))) {
+    await localPool.execute(
+      'ALTER TABLE orders ADD COLUMN discount_cents INT UNSIGNED NOT NULL DEFAULT 0 AFTER shipping_cost_cents'
+    )
   }
   if (!(await columnExists(localPool, 'orders', 'billing_address_json'))) {
     await localPool.execute(

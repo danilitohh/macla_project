@@ -79,6 +79,65 @@ const generateOrderCode = () => {
   return `MAC-${random.slice(0, 8)}`
 }
 
+const DISCOUNT_CODES = {
+  MACLA10: { type: 'percent', value: 10, minSubtotal: 60000, label: '10% en tu compra' },
+  ENVIOFREE: { type: 'shipping', value: Number.MAX_SAFE_INTEGER, minSubtotal: 90000, label: 'Envío gratis' },
+  VIP20: { type: 'percent', value: 20, maxCents: 60000, minSubtotal: 150000, label: 'VIP 20% OFF' }
+}
+
+const normalizeDiscountCode = (code = '') => String(code).trim().toUpperCase()
+
+const calculateDiscount = ({ code, subtotalCents = 0, shippingCents = 0 }) => {
+  const normalized = normalizeDiscountCode(code)
+  const config = DISCOUNT_CODES[normalized]
+
+  if (!config) {
+    return {
+      valid: false,
+      code: normalized,
+      discountCents: 0,
+      shippingDiscountCents: 0,
+      reason: 'Código no válido'
+    }
+  }
+
+  if (config.minSubtotal && subtotalCents < config.minSubtotal) {
+    return {
+      valid: false,
+      code: normalized,
+      discountCents: 0,
+      shippingDiscountCents: 0,
+      reason: `Subtotal mínimo ${config.minSubtotal} requerido`
+    }
+  }
+
+  let discountCents = 0
+  let shippingDiscountCents = 0
+
+  if (config.type === 'percent') {
+    discountCents = Math.floor((subtotalCents * config.value) / 100)
+    if (config.maxCents) {
+      discountCents = Math.min(discountCents, config.maxCents)
+    }
+  } else if (config.type === 'flat') {
+    discountCents = Math.min(config.value, subtotalCents)
+  } else if (config.type === 'shipping') {
+    shippingDiscountCents = Math.min(shippingCents || config.value, shippingCents || config.value)
+  }
+
+  discountCents = Math.max(0, Math.min(discountCents, subtotalCents))
+  shippingDiscountCents = Math.max(0, shippingDiscountCents)
+
+  return {
+    valid: discountCents > 0 || shippingDiscountCents > 0,
+    code: normalized,
+    discountCents,
+    shippingDiscountCents,
+    label: config.label || normalized,
+    type: config.type
+  }
+}
+
 const TOKEN_CONFIG = {
   activation: Number(process.env.ACTIVATION_TOKEN_EXPIRES_MINUTES || 30),
   password_reset: Number(process.env.PASSWORD_RESET_TOKEN_EXPIRES_MINUTES || 15)
@@ -246,6 +305,53 @@ const SQL = {
     WHERE id = ?
       AND is_active = 1
   `,
+  userAddressesByUser: `
+    SELECT id, label, contact_name, contact_phone, city, address_line, notes, is_default_shipping, is_default_billing
+    FROM user_addresses
+    WHERE user_id = ?
+    ORDER BY is_default_shipping DESC, id DESC
+  `,
+  userAddressById: `
+    SELECT id, user_id, label, contact_name, contact_phone, city, address_line, notes, is_default_shipping, is_default_billing
+    FROM user_addresses
+    WHERE id = ?
+      AND user_id = ?
+    LIMIT 1
+  `,
+  insertUserAddress: `
+    INSERT INTO user_addresses (
+      user_id,
+      label,
+      contact_name,
+      contact_phone,
+      city,
+      address_line,
+      notes,
+      is_default_shipping,
+      is_default_billing,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+  updateUserAddress: `
+    UPDATE user_addresses
+    SET
+      label = ?,
+      contact_name = ?,
+      contact_phone = ?,
+      city = ?,
+      address_line = ?,
+      notes = ?,
+      is_default_shipping = ?,
+      is_default_billing = ?,
+      updated_at = ?
+    WHERE id = ?
+      AND user_id = ?
+  `,
+  clearDefaultShipping: 'UPDATE user_addresses SET is_default_shipping = 0 WHERE user_id = ?',
+  clearDefaultBilling: 'UPDATE user_addresses SET is_default_billing = 0 WHERE user_id = ?',
+  deleteUserAddress: 'DELETE FROM user_addresses WHERE id = ? AND user_id = ?',
   insertOrder: `
     INSERT INTO orders (
       code,
@@ -261,6 +367,7 @@ const SQL = {
       shipping_option_id,
       subtotal_cents,
       shipping_cost_cents,
+      discount_cents,
       total_cents,
       currency,
       status,
@@ -269,7 +376,7 @@ const SQL = {
       shipping_address_json,
       metadata_json
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
   `,
   insertOrderItem: `
     INSERT INTO order_items (
@@ -300,9 +407,11 @@ const SQL = {
       o.status,
       o.subtotal_cents,
       o.shipping_cost_cents,
+      o.discount_cents,
       o.total_cents,
       o.currency,
       o.submitted_at,
+      o.metadata_json,
       o.customer_name,
       o.customer_city,
       o.customer_notes,
@@ -381,6 +490,18 @@ const toUserDto = (row) => ({
   city: row.city || null,
   address: row.address_line || null,
   emailVerified: Boolean(row.email_verified_at)
+})
+
+const toAddressDto = (row) => ({
+  id: row.id,
+  label: row.label,
+  contactName: row.contact_name,
+  contactPhone: row.contact_phone,
+  city: row.city,
+  address: row.address_line,
+  notes: row.notes || null,
+  isDefaultShipping: Boolean(row.is_default_shipping),
+  isDefaultBilling: Boolean(row.is_default_billing)
 })
 
 const issueToken = (userId) =>
@@ -772,6 +893,126 @@ app.put('/api/profile', requireAuth, async (req, res, next) => {
   }
 })
 
+app.get('/api/addresses', requireAuth, async (req, res, next) => {
+  try {
+    const [rows] = await query(SQL.userAddressesByUser, [req.userId])
+    const addresses = rows.map(toAddressDto)
+    return res.json({ addresses })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.post('/api/addresses', requireAuth, async (req, res, next) => {
+  try {
+    const payload = req.body || {}
+    const label = sanitizeText(payload.label || 'Mi dirección')
+    const contactName = sanitizeName(payload.contactName || req.authUser?.name)
+    const contactPhone = sanitizePhone(payload.contactPhone || req.authUser?.phone)
+    const city = sanitizeText(payload.city || req.authUser?.city)
+    const address = sanitizeText(payload.address)
+    const notes = sanitizeText(payload.notes || '')
+    const isDefaultShipping = Boolean(payload.isDefaultShipping)
+    const isDefaultBilling = Boolean(payload.isDefaultBilling)
+
+    if (!label || !contactName || !contactPhone || !city || !address) {
+      return res.status(400).json({ message: 'Completa nombre, teléfono, ciudad y dirección para guardar.' })
+    }
+
+    const nowSql = formatDateForSql(new Date())
+
+    if (isDefaultShipping) {
+      await query(SQL.clearDefaultShipping, [req.userId])
+    }
+    if (isDefaultBilling) {
+      await query(SQL.clearDefaultBilling, [req.userId])
+    }
+
+    const [result] = await query(SQL.insertUserAddress, [
+      req.userId,
+      label,
+      contactName,
+      contactPhone,
+      city,
+      address,
+      notes || null,
+      isDefaultShipping ? 1 : 0,
+      isDefaultBilling ? 1 : 0,
+      nowSql,
+      nowSql
+    ])
+
+    const [rows] = await query(SQL.userAddressById, [result.insertId, req.userId])
+    const created = rows[0]
+    return res.status(201).json({ address: created ? toAddressDto(created) : null })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.put('/api/addresses/:id', requireAuth, async (req, res, next) => {
+  try {
+    const addressId = safeInteger(req.params.id, 0)
+    const [existingRows] = await query(SQL.userAddressById, [addressId, req.userId])
+    const existing = existingRows[0]
+    if (!existing) {
+      return res.status(404).json({ message: 'Dirección no encontrada.' })
+    }
+
+    const payload = req.body || {}
+    const label = sanitizeText(payload.label || existing.label)
+    const contactName = sanitizeName(payload.contactName || existing.contact_name)
+    const contactPhone = sanitizePhone(payload.contactPhone || existing.contact_phone)
+    const city = sanitizeText(payload.city || existing.city)
+    const address = sanitizeText(payload.address || existing.address_line)
+    const notes = sanitizeText(payload.notes || existing.notes || '')
+    const isDefaultShipping = payload.isDefaultShipping ? 1 : existing.is_default_shipping
+    const isDefaultBilling = payload.isDefaultBilling ? 1 : existing.is_default_billing
+
+    if (!label || !contactName || !contactPhone || !city || !address) {
+      return res.status(400).json({ message: 'Completa nombre, teléfono, ciudad y dirección para guardar.' })
+    }
+
+    if (isDefaultShipping) {
+      await query(SQL.clearDefaultShipping, [req.userId])
+    }
+    if (isDefaultBilling) {
+      await query(SQL.clearDefaultBilling, [req.userId])
+    }
+
+    const nowSql = formatDateForSql(new Date())
+    await query(SQL.updateUserAddress, [
+      label,
+      contactName,
+      contactPhone,
+      city,
+      address,
+      notes || null,
+      isDefaultShipping ? 1 : 0,
+      isDefaultBilling ? 1 : 0,
+      nowSql,
+      addressId,
+      req.userId
+    ])
+
+    const [rows] = await query(SQL.userAddressById, [addressId, req.userId])
+    const updated = rows[0]
+    return res.json({ address: updated ? toAddressDto(updated) : null })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.delete('/api/addresses/:id', requireAuth, async (req, res, next) => {
+  try {
+    const addressId = safeInteger(req.params.id, 0)
+    await query(SQL.deleteUserAddress, [addressId, req.userId])
+    return res.status(204).send()
+  } catch (error) {
+    return next(error)
+  }
+})
+
 app.get('/api/cart', requireAuth, async (req, res, next) => {
   try {
     const [cartRows] = await query(SQL.findActiveCart, [req.userId])
@@ -877,6 +1118,36 @@ app.put('/api/cart', requireAuth, async (req, res, next) => {
   }
 })
 
+app.post('/api/discounts/validate', requireAuth, async (req, res) => {
+  const subtotalCents = safeInteger(req.body?.subtotalCents, 0)
+  const shippingCents = safeInteger(req.body?.shippingCents, 0)
+  const code = normalizeDiscountCode(req.body?.code || req.body?.discountCode || '')
+
+  if (!code) {
+    return res.status(400).json({ message: 'Ingresa un código para validarlo.' })
+  }
+
+  const result = calculateDiscount({ code, subtotalCents, shippingCents })
+  if (!result.valid) {
+    return res.status(400).json({ message: 'El código no es válido para este pedido.' })
+  }
+
+  const totalDiscountCents = result.discountCents + result.shippingDiscountCents
+  const adjustedShipping = Math.max(0, shippingCents - result.shippingDiscountCents)
+  const estimatedTotal = Math.max(0, subtotalCents - result.discountCents + adjustedShipping)
+
+  return res.json({
+    code: result.code,
+    discount: totalDiscountCents,
+    breakdown: {
+      products: result.discountCents,
+      shipping: result.shippingDiscountCents
+    },
+    label: result.label,
+    estimatedTotal
+  })
+})
+
 app.post('/api/orders', requireAuth, async (req, res, next) => {
   const payload = req.body || {}
   const customer = payload.customer || {}
@@ -884,20 +1155,34 @@ app.post('/api/orders', requireAuth, async (req, res, next) => {
   const paymentMethodIdRaw = payload.paymentMethodId || payload.paymentMethod?.id || ''
   const shippingOptionId = sanitizeText(shippingOptionIdRaw) || null
   const paymentMethodId = sanitizeText(paymentMethodIdRaw) || null
+  const discountCodeRaw = sanitizeText(payload.discountCode || payload.coupon || '')
+  const discountCode = normalizeDiscountCode(discountCodeRaw)
+  const addressId = safeInteger(payload.addressId, 0)
 
-  const customerName = sanitizeName(customer.name)
   const customerEmail = normalizeEmail(customer.email)
-  const customerPhone = sanitizeText(customer.phone)
-  const customerCity = sanitizeText(customer.city)
-  const customerAddress = sanitizeText(customer.address)
-  const customerNotesRaw = sanitizeText(customer.notes || '')
+
+  if (!customerEmail || !customerEmail.includes('@')) {
+    return res.status(400).json({ message: 'Debes ingresar un correo válido.' })
+  }
+
+  let addressRecord = null
+  if (addressId > 0) {
+    const [addressRows] = await query(SQL.userAddressById, [addressId, req.userId])
+    addressRecord = addressRows[0] || null
+    if (!addressRecord) {
+      return res.status(404).json({ message: 'La dirección seleccionada no existe.' })
+    }
+  }
+
+  const customerName = sanitizeName(customer.name || addressRecord?.contact_name)
+  const customerPhone = sanitizeText(customer.phone || addressRecord?.contact_phone)
+  const customerCity = sanitizeText(customer.city || addressRecord?.city)
+  const customerAddress = sanitizeText(customer.address || addressRecord?.address_line)
+  const customerNotesRaw = sanitizeText(customer.notes || addressRecord?.notes || '')
   const customerNotes = customerNotesRaw.length > 0 ? customerNotesRaw : null
 
   if (!customerName) {
     return res.status(400).json({ message: 'El nombre es obligatorio.' })
-  }
-  if (!customerEmail || !customerEmail.includes('@')) {
-    return res.status(400).json({ message: 'Debes ingresar un correo válido.' })
   }
   if (!customerPhone) {
     return res.status(400).json({ message: 'Debes ingresar un teléfono de contacto.' })
@@ -917,16 +1202,27 @@ app.post('/api/orders', requireAuth, async (req, res, next) => {
 
     const now = new Date()
     const nowSql = formatDateForSql(now)
-    const shippingAddressPayload = {
-      name: customerName,
-      phone: customerPhone,
-      city: customerCity,
-      address: customerAddress,
-      notes: customerNotes || undefined
-    }
+    const shippingAddressPayload = addressRecord
+      ? {
+          id: addressRecord.id,
+          label: addressRecord.label,
+          name: addressRecord.contact_name,
+          phone: addressRecord.contact_phone,
+          city: addressRecord.city,
+          address: addressRecord.address_line,
+          notes: addressRecord.notes || undefined
+        }
+      : {
+          name: customerName,
+          phone: customerPhone,
+          city: customerCity,
+          address: customerAddress,
+          notes: customerNotes || undefined
+        }
     const metadata = {
       origin: 'checkout-web',
-      submittedAt: now.toISOString()
+      submittedAt: now.toISOString(),
+      addressId: addressRecord?.id || null
     }
 
     let cartId = null
@@ -1056,7 +1352,31 @@ app.post('/api/orders', requireAuth, async (req, res, next) => {
       metadata.paymentMethodLabel = paymentMethod.label
     }
 
-    const totalCents = subtotalCents + shippingCostCents
+    let discountDetails = {
+      discountCents: 0,
+      shippingDiscountCents: 0,
+      code: null,
+      label: null
+    }
+
+    if (discountCode) {
+      const calc = calculateDiscount({ code: discountCode, subtotalCents, shippingCents: shippingCostCents })
+      if (!calc.valid) {
+        await connection.rollback()
+        return res.status(400).json({ message: 'El código de descuento no es válido o no aplica al pedido.' })
+      }
+      discountDetails = calc
+      metadata.discount = {
+        code: calc.code,
+        label: calc.label,
+        products: calc.discountCents,
+        shipping: calc.shippingDiscountCents
+      }
+    }
+
+    const shippingCostFinalCents = Math.max(0, shippingCostCents - discountDetails.shippingDiscountCents)
+    const totalDiscountCents = discountDetails.discountCents + (shippingCostCents - shippingCostFinalCents)
+    const totalCents = Math.max(0, subtotalCents - discountDetails.discountCents + shippingCostFinalCents)
     metadata.itemsCount = orderItemsForInsert.length
 
     const shippingAddressJson = JSON.stringify(shippingAddressPayload)
@@ -1084,7 +1404,8 @@ app.post('/api/orders', requireAuth, async (req, res, next) => {
           paymentMethodId,
           shippingOptionId,
           subtotalCents,
-          shippingCostCents,
+          shippingCostFinalCents,
+          totalDiscountCents,
           totalCents,
           'COP',
           nowSql,
@@ -1139,7 +1460,9 @@ app.post('/api/orders', requireAuth, async (req, res, next) => {
         code: orderCode,
         status: 'pending',
         subtotal: subtotalCents,
-        shippingCost: shippingCostCents,
+        shippingCost: shippingCostFinalCents,
+        discount: totalDiscountCents,
+        discountCode: discountDetails.code,
         total: totalCents,
         currency: 'COP',
         submittedAt: now.toISOString(),
@@ -1201,12 +1524,16 @@ app.get('/api/orders', requireAuth, async (req, res, next) => {
           }
         })
 
+        const metadata = parseJsonSafe(order.metadata_json) || {}
+
         return {
           id: order.id,
           code: order.code,
           status: order.status,
           subtotal: safeInteger(order.subtotal_cents, 0),
           shippingCost: safeInteger(order.shipping_cost_cents, 0),
+          discount: safeInteger(order.discount_cents, 0),
+          discountCode: metadata?.discount?.code || null,
           total: safeInteger(order.total_cents, 0),
           currency: order.currency || 'COP',
           submittedAt: order.submitted_at ? new Date(order.submitted_at).toISOString() : null,

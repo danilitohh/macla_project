@@ -1,27 +1,109 @@
-import { useMemo, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { FormEvent, ChangeEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useCart } from '../hooks/useCart'
 import { formatCurrency } from '../utils/format'
 import { paymentMethods, shippingOptions } from '../data/config'
-import { submitOrder } from '../services/orderService'
-import type { OrderPayload, OrderCustomer, OrderSummary, OrderItemSummary } from '../types'
+import { submitOrder, validateDiscount } from '../services/orderService'
+import { createAddress, getAddresses } from '../services/addressService'
+import type { OrderPayload, OrderCustomer, OrderSummary, OrderItemSummary, Address } from '../types'
 import { trackEvent } from '../utils/analytics'
 import { useAuth } from '../hooks/useAuth'
 
 const CheckoutPage = () => {
   const { items, subtotal, clearCart } = useCart()
-  const { isAuthenticated, isLoading } = useAuth()
+  const { user, isAuthenticated, isLoading } = useAuth()
   const navigate = useNavigate()
   const [shippingId, setShippingId] = useState<string>('medellin')
   const [paymentId, setPaymentId] = useState<string>('contraentrega')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submittedOrder, setSubmittedOrder] = useState<OrderSummary | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [addresses, setAddresses] = useState<Address[]>([])
+  const [addressesLoading, setAddressesLoading] = useState(false)
+  const [addressesError, setAddressesError] = useState<string | null>(null)
+  const [selectedAddressId, setSelectedAddressId] = useState<number | null>(null)
+  const [formValues, setFormValues] = useState<OrderCustomer>({
+    name: user?.name ?? '',
+    email: user?.email ?? '',
+    phone: user?.phone ?? '',
+    city: user?.city ?? '',
+    address: user?.address ?? '',
+    notes: ''
+  })
+  const [saveAddress, setSaveAddress] = useState(false)
+  const [addressLabel, setAddressLabel] = useState('Casa')
+  const [discountCode, setDiscountCode] = useState('')
+  const [appliedDiscount, setAppliedDiscount] = useState<{
+    code: string
+    discount: number
+    breakdown: { products: number; shipping: number }
+  } | null>(null)
+  const [discountMessage, setDiscountMessage] = useState<string | null>(null)
+  const [discountError, setDiscountError] = useState<string | null>(null)
+  const [validatingDiscount, setValidatingDiscount] = useState(false)
+
+  useEffect(() => {
+    if (!user) return
+    setFormValues((prev) => ({
+      ...prev,
+      name: user.name || prev.name,
+      email: user.email || prev.email,
+      phone: user.phone ?? prev.phone,
+      city: user.city ?? prev.city,
+      address: user.address ?? prev.address
+    }))
+  }, [user])
+
+  useEffect(() => {
+    let isMounted = true
+    setAddressesLoading(true)
+    setAddressesError(null)
+    getAddresses()
+      .then((list) => {
+        if (!isMounted) return
+        setAddresses(list)
+      })
+      .catch((err) => {
+        console.error(err)
+        if (isMounted) {
+          setAddressesError('No pudimos cargar tus direcciones guardadas.')
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setAddressesLoading(false)
+        }
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (addresses.length === 0 || selectedAddressId) {
+      return
+    }
+    const preferred = addresses.find((addr) => addr.isDefaultShipping) || addresses[0]
+    if (preferred) {
+      setSelectedAddressId(preferred.id)
+      setFormValues((prev) => ({
+        ...prev,
+        name: prev.name || preferred.contactName,
+        phone: preferred.contactPhone,
+        city: preferred.city,
+        address: preferred.address
+      }))
+    }
+  }, [addresses, selectedAddressId])
 
   const shipping = useMemo(() => shippingOptions.find((option) => option.id === shippingId), [shippingId])
   const payment = useMemo(() => paymentMethods.find((method) => method.id === paymentId), [paymentId])
-  const total = subtotal + (shipping?.price ?? 0)
+  const shippingDiscount = appliedDiscount?.breakdown.shipping ?? 0
+  const productDiscount = appliedDiscount?.breakdown.products ?? 0
+  const shippingCost = Math.max(0, (shipping?.price ?? 0) - shippingDiscount)
+  const total = Math.max(0, subtotal - productDiscount + shippingCost)
   const pendingSummaryItems: OrderItemSummary[] = useMemo(
     () =>
       items.map((item) => ({
@@ -38,30 +120,90 @@ const CheckoutPage = () => {
     [items]
   )
 
+  const handleInputChange = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = event.currentTarget
+    setFormValues((prev) => ({ ...prev, [name]: value }))
+  }
+
+  const handleAddressSelect = (address: Address) => {
+    setSelectedAddressId(address.id)
+    setFormValues((prev) => ({
+      ...prev,
+      name: prev.name || address.contactName,
+      phone: address.contactPhone,
+      city: address.city,
+      address: address.address,
+      notes: prev.notes
+    }))
+  }
+
+  const handleApplyDiscount = async (providedCode?: string) => {
+    const codeToApply = (providedCode ?? discountCode).trim()
+    if (!codeToApply) {
+      setDiscountError('Ingresa un código para aplicarlo.')
+      setDiscountMessage(null)
+      return
+    }
+    setValidatingDiscount(true)
+    setDiscountError(null)
+    try {
+      const result = await validateDiscount({
+        code: codeToApply,
+        subtotalCents: subtotal,
+        shippingCents: shipping?.price ?? 0
+      })
+      setAppliedDiscount({
+        code: result.code,
+        discount: result.discount,
+        breakdown: result.breakdown
+      })
+      setDiscountMessage(`Código aplicado: ${result.code}`)
+    } catch (err) {
+      console.error(err)
+      setAppliedDiscount(null)
+      if (err instanceof Error) {
+        setDiscountError(err.message)
+      } else {
+        setDiscountError('No pudimos validar este código.')
+      }
+    } finally {
+      setValidatingDiscount(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!appliedDiscount?.code) {
+      return
+    }
+    handleApplyDiscount(appliedDiscount.code).catch((err) => console.error('[discount] revalidate', err))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shippingId, subtotal])
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (items.length === 0) {
       navigate('/productos')
       return
     }
-    const formData = new FormData(event.currentTarget)
-    const payload = Object.fromEntries(formData.entries())
-    const customer: OrderCustomer = {
-      name: String(payload.name ?? ''),
-      email: String(payload.email ?? ''),
-      phone: String(payload.phone ?? ''),
-      city: String(payload.city ?? ''),
-      address: String(payload.address ?? ''),
-      notes: payload.notes ? String(payload.notes) : undefined
-    }
 
     setIsSubmitting(true)
     setSubmitError(null)
 
+    const trimmedCustomer: OrderCustomer = {
+      name: formValues.name.trim(),
+      email: formValues.email.trim(),
+      phone: formValues.phone.trim(),
+      city: formValues.city.trim(),
+      address: formValues.address.trim(),
+      notes: formValues.notes?.trim() || undefined
+    }
+
     const orderData: OrderPayload = {
-      customer,
+      customer: trimmedCustomer,
       paymentMethodId: payment?.id ?? null,
       shippingOptionId: shipping?.id ?? null,
+      addressId: selectedAddressId,
+      discountCode: appliedDiscount?.code || (discountCode ? discountCode.trim() : null),
       items
     }
 
@@ -69,6 +211,16 @@ const CheckoutPage = () => {
       const order = await submitOrder(orderData)
       setSubmittedOrder(order)
       clearCart()
+      if (saveAddress) {
+        createAddress({
+          label: addressLabel || 'Mi dirección',
+          contactName: trimmedCustomer.name,
+          contactPhone: trimmedCustomer.phone,
+          city: trimmedCustomer.city,
+          address: trimmedCustomer.address,
+          notes: trimmedCustomer.notes
+        }).then((newAddress) => setAddresses((prev) => [newAddress, ...prev]))
+      }
       trackEvent('purchase', {
         transaction_id: order.code,
         value: order.total,
@@ -138,8 +290,9 @@ const CheckoutPage = () => {
 
   const summaryItems = submittedOrder ? submittedOrder.items : pendingSummaryItems
   const summarySubtotal = submittedOrder ? submittedOrder.subtotal : subtotal
-  const summaryShipping = submittedOrder ? submittedOrder.shippingCost : shipping?.price ?? 0
-  const summaryTotal = submittedOrder ? submittedOrder.total : summarySubtotal + (summaryShipping ?? 0)
+  const summaryShipping = submittedOrder ? submittedOrder.shippingCost : shippingCost
+  const summaryDiscount = submittedOrder ? submittedOrder.discount ?? 0 : appliedDiscount?.discount ?? 0
+  const summaryTotal = submittedOrder ? submittedOrder.total : Math.max(0, summarySubtotal - summaryDiscount + summaryShipping)
 
   return (
     <div className="page">
@@ -170,6 +323,12 @@ const CheckoutPage = () => {
                 Modalidad de envío:{' '}
                 {submittedOrder.shippingOption?.label ?? 'Definiremos los detalles de entrega contigo.'}
               </p>
+              {submittedOrder.discount > 0 && (
+                <p className="muted">
+                  Descuento aplicado: -{formatCurrency(submittedOrder.discount)}
+                  {submittedOrder.discountCode ? ` (${submittedOrder.discountCode})` : ''}
+                </p>
+              )}
               <button type="button" className="btn btn--primary" onClick={() => navigate('/productos')}>
                 Seguir explorando productos
               </button>
@@ -177,31 +336,124 @@ const CheckoutPage = () => {
           ) : (
             <form className="checkout-form" onSubmit={handleSubmit}>
               <h2>Datos de contacto y envío</h2>
+              {addressesLoading ? (
+                <p className="muted">Cargando tus direcciones guardadas…</p>
+              ) : addressesError ? (
+                <p className="form-error">{addressesError}</p>
+              ) : addresses.length > 0 ? (
+                <div className="option-list">
+                  {addresses.map((address) => (
+                    <label
+                      key={address.id}
+                      className={selectedAddressId === address.id ? 'option is-selected' : 'option'}
+                    >
+                      <input
+                        type="radio"
+                        name="savedAddress"
+                        value={address.id}
+                        checked={selectedAddressId === address.id}
+                        onChange={() => handleAddressSelect(address)}
+                      />
+                      <div>
+                        <strong>{address.label}</strong>
+                        <p className="muted">
+                          {address.city} · {address.address}
+                        </p>
+                        <p className="muted">
+                          Contacto: {address.contactName} · {address.contactPhone}
+                        </p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">Aún no tienes direcciones guardadas.</p>
+              )}
               <div className="form-grid">
                 <label>
                   Nombre completo
-                  <input name="name" type="text" required placeholder="María Clara" />
+                  <input
+                    name="name"
+                    type="text"
+                    required
+                    placeholder="María Clara"
+                    value={formValues.name}
+                    onChange={handleInputChange}
+                  />
                 </label>
                 <label>
                   Correo electrónico
-                  <input name="email" type="email" required placeholder="tuemail@ejemplo.com" />
+                  <input
+                    name="email"
+                    type="email"
+                    required
+                    placeholder="tuemail@ejemplo.com"
+                    value={formValues.email}
+                    onChange={handleInputChange}
+                  />
                 </label>
                 <label>
                   Teléfono de contacto
-                  <input name="phone" type="tel" required placeholder="300 000 0000" />
+                  <input
+                    name="phone"
+                    type="tel"
+                    required
+                    placeholder="300 000 0000"
+                    value={formValues.phone}
+                    onChange={handleInputChange}
+                  />
                 </label>
                 <label>
                   Ciudad
-                  <input name="city" type="text" required placeholder="Medellín" />
+                  <input
+                    name="city"
+                    type="text"
+                    required
+                    placeholder="Medellín"
+                    value={formValues.city}
+                    onChange={handleInputChange}
+                  />
                 </label>
                 <label className="form-grid--full">
                   Dirección de entrega
-                  <input name="address" type="text" required placeholder="Carrera 00 #00-00" />
+                  <input
+                    name="address"
+                    type="text"
+                    required
+                    placeholder="Carrera 00 #00-00"
+                    value={formValues.address}
+                    onChange={handleInputChange}
+                  />
                 </label>
                 <label className="form-grid--full">
                   Notas adicionales
-                  <textarea name="notes" rows={3} placeholder="Horarios especiales, indicaciones, etc." />
+                  <textarea
+                    name="notes"
+                    rows={3}
+                    placeholder="Horarios especiales, indicaciones, etc."
+                    value={formValues.notes}
+                    onChange={handleInputChange}
+                  />
                 </label>
+                <label className="checkbox form-grid--full">
+                  <input
+                    type="checkbox"
+                    checked={saveAddress}
+                    onChange={(event) => setSaveAddress(event.currentTarget.checked)}
+                  />
+                  <span>Guardar esta información como una dirección frecuente.</span>
+                </label>
+                {saveAddress && (
+                  <label className="form-grid--full">
+                    Nombre de la dirección
+                    <input
+                      type="text"
+                      value={addressLabel}
+                      onChange={(event) => setAddressLabel(event.currentTarget.value)}
+                      placeholder="Casa, Oficina, Bodega…"
+                    />
+                  </label>
+                )}
               </div>
 
               <h2>Envío</h2>
@@ -245,6 +497,30 @@ const CheckoutPage = () => {
                 ))}
               </div>
 
+              <h2>Descuentos</h2>
+              <div className="checkout-coupon">
+                <label htmlFor="discountCode">¿Tienes un código de descuento?</label>
+                <div className="checkout-coupon__controls">
+                  <input
+                    id="discountCode"
+                    type="text"
+                    value={discountCode}
+                    onChange={(event) => setDiscountCode(event.currentTarget.value)}
+                    placeholder="MACLA10, ENVIOFREE…"
+                  />
+                  <button
+                    type="button"
+                    className="btn btn--ghost"
+                    onClick={() => handleApplyDiscount()}
+                    disabled={validatingDiscount}
+                  >
+                    {validatingDiscount ? 'Validando…' : 'Aplicar'}
+                  </button>
+                </div>
+                {discountMessage && <p className="form-success">{discountMessage}</p>}
+                {discountError && <p className="form-error">{discountError}</p>}
+              </div>
+
               <div className="checkout-summary">
                 <div>
                   <span>Subtotal</span>
@@ -252,8 +528,14 @@ const CheckoutPage = () => {
                 </div>
                 <div>
                   <span>Envío</span>
-                  <strong>{shipping?.price ? formatCurrency(shipping.price) : 'A convenir'}</strong>
+                  <strong>{shippingCost ? formatCurrency(shippingCost) : 'A convenir'}</strong>
                 </div>
+                {summaryDiscount > 0 && (
+                  <div>
+                    <span>Descuento</span>
+                    <strong>-{formatCurrency(summaryDiscount)}</strong>
+                  </div>
+                )}
                 <div className="checkout-summary__total">
                   <span>Total estimado</span>
                   <strong>{formatCurrency(total)}</strong>
@@ -296,6 +578,12 @@ const CheckoutPage = () => {
                       {summaryShipping ? formatCurrency(summaryShipping) : 'A convenir con nuestro equipo'}
                     </strong>
                   </div>
+                  {summaryDiscount > 0 && (
+                    <div>
+                      <span>Descuento</span>
+                      <strong>-{formatCurrency(summaryDiscount)}</strong>
+                    </div>
+                  )}
                   <div className="checkout-summary__total">
                     <span>Total estimado</span>
                     <strong>{formatCurrency(summaryTotal)}</strong>

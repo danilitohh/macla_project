@@ -62,6 +62,8 @@ export interface OrderPayload {
   customer: OrderCustomer
   shippingOptionId: string | null
   paymentMethodId: string | null
+  addressId?: number | null
+  discountCode?: string | null
   items?: CartItem[]
 }
 
@@ -88,12 +90,26 @@ export interface OrderSummary {
   submittedAt: string | null
   subtotal: number
   shippingCost: number
+  discount: number
   total: number
   currency: 'COP'
   customerName: string
   customerCity: string
   notes: string | null
+  discountCode?: string | null
   paymentMethod: { id: string; label: string; description?: string | null } | null
   shippingOption: { id: string; label: string; description?: string | null; price: number | null } | null
   items: OrderItemSummary[]
+}
+
+export interface Address {
+  id: number
+  label: string
+  contactName: string
+  contactPhone: string
+  city: string
+  address: string
+  notes?: string | null
+  isDefaultShipping: boolean
+  isDefaultBilling: boolean
 }

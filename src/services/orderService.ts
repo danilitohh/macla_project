@@ -15,3 +15,21 @@ export const getUserOrders = async (): Promise<OrderSummary[]> => {
   })
   return Array.isArray(result.orders) ? result.orders : []
 }
+
+export const validateDiscount = async ({
+  code,
+  subtotalCents,
+  shippingCents
+}: {
+  code: string
+  subtotalCents: number
+  shippingCents: number
+}) => {
+  return request<{ code: string; discount: number; breakdown: { products: number; shipping: number }; estimatedTotal: number }>(
+    '/discounts/validate',
+    {
+      method: 'POST',
+      body: JSON.stringify({ code, subtotalCents, shippingCents })
+    }
+  )
+}
