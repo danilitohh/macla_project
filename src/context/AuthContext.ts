@@ -1,14 +1,11 @@
 import { createContext } from 'react'
 import type { User } from '../types'
 import type {
-  ActivationPayload,
   Credentials,
   ProfileUpdatePayload,
   RegistrationPayload,
-  RegistrationResponse,
   RecoveryRequestPayload,
   RecoveryResponse,
-  ResendActivationResponse,
   ResetPasswordPayload
 } from '../services/authService'
 
@@ -18,9 +15,7 @@ export interface AuthContextValue {
   isLoading: boolean
   error: string | null
   login: (credentials: Credentials) => Promise<void>
-  register: (payload: RegistrationPayload) => Promise<RegistrationResponse>
-  activate: (payload: ActivationPayload) => Promise<{ user?: User; alreadyActive?: boolean }>
-  resendActivation: (email: string) => Promise<ResendActivationResponse>
+  register: (payload: RegistrationPayload) => Promise<User>
   requestPasswordReset: (payload: RecoveryRequestPayload) => Promise<RecoveryResponse>
   resetPassword: (payload: ResetPasswordPayload) => Promise<User>
   updateProfile: (payload: ProfileUpdatePayload) => Promise<User>

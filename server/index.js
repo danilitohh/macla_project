@@ -173,7 +173,8 @@ const SQL = {
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
-  updateUserLogin: 'UPDATE users SET updated_at = ?, last_login_at = ? WHERE id = ?',
+  updateUserLogin:
+    'UPDATE users SET updated_at = ?, last_login_at = ?, is_active = 1, email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?',
   userProfileById:
     'SELECT id, name, email, role, phone, city, address_line, email_verified_at, created_at, updated_at FROM users WHERE id = ?',
   updateUserProfile: 'UPDATE users SET name = ?, phone = ?, city = ?, address_line = ?, updated_at = ? WHERE id = ?',
@@ -411,7 +412,7 @@ const requireAuth = async (req, res, next) => {
   try {
     const [rows] = await query(SQL.userForAuth, [payload.sub])
     const user = rows[0]
-    if (!user || user.is_active === 0) {
+    if (!user) {
       return res.status(401).json({ message: 'No autorizado' })
     }
 
@@ -471,8 +472,6 @@ app.post('/api/auth/register', async (req, res, next) => {
     const phone = sanitizePhone(req.body.phone)
     const city = sanitizeText(req.body.city)
     const address = sanitizeText(req.body.address)
-    const preferredChannelRaw = String(req.body.channel || '').toLowerCase()
-    const activationChannel = preferredChannelRaw === 'sms' && phone ? 'sms' : 'email'
 
     if (!name) {
       return res.status(400).json({ message: 'El nombre es obligatorio.' })
@@ -489,7 +488,8 @@ app.post('/api/auth/register', async (req, res, next) => {
       return res.status(409).json({ message: 'Ya existe una cuenta registrada con este correo.' })
     }
 
-    const now = formatDateForSql(new Date())
+    const now = new Date()
+    const nowSql = formatDateForSql(now)
     const passwordHash = bcrypt.hashSync(password, 10)
     const id =
       typeof crypto.randomUUID === 'function'
@@ -504,47 +504,33 @@ app.post('/api/auth/register', async (req, res, next) => {
       phone || null,
       city || null,
       address || null,
-      null,
-      0,
+      nowSql,
+      1,
       'customer',
-      now,
-      now
+      nowSql,
+      nowSql
     ])
 
-    const activation = await createVerificationToken({
-      userId: id,
-      type: 'activation',
-      channel: activationChannel,
-      metadata: { email, phone: phone || null }
-    })
-
-    sendVerificationNotification({
-      type: 'activation',
-      code: activation.code,
-      token: activation.token,
-      email,
-      phone: phone || null,
-      channel: activationChannel
-    }).catch((notifyError) => {
-      console.error('[auth] Error enviando activación:', notifyError)
-    })
-
-    if (process.env.NODE_ENV !== 'production') {
-      console.info('[auth] Activación generada', {
+    const [profileRows] = await query(SQL.userProfileById, [id])
+    const profile =
+      profileRows[0] ||
+      {
+        id,
+        name,
         email,
-        channel: activationChannel,
-        token: activation.token,
-        code: activation.code
-      })
-    }
+        role: 'customer',
+        phone: phone || null,
+        city: city || null,
+        address_line: address || null,
+        email_verified_at: nowSql
+      }
+
+    const jwtToken = issueToken(id)
 
     return res.status(201).json({
-      requiresActivation: true,
-      userId: id,
-      email,
-      channel: activationChannel,
-      message: 'Tu cuenta fue creada. Revisa el correo o SMS para activar el acceso.',
-      debug: process.env.NODE_ENV === 'production' ? undefined : activation
+      token: jwtToken,
+      user: toUserDto(profile),
+      message: 'Tu cuenta fue creada. Ya puedes continuar navegando.'
     })
   } catch (error) {
     return next(error)
@@ -554,14 +540,8 @@ app.post('/api/auth/register', async (req, res, next) => {
 app.post('/api/auth/activate', async (req, res, next) => {
   try {
     const email = normalizeEmail(req.body.email)
-    const token = String(req.body.token || '').trim() || null
-    const code = String(req.body.code || '').trim() || null
-
     if (!email) {
       return res.status(400).json({ message: 'Debes indicar el correo de la cuenta.' })
-    }
-    if (!token && !code) {
-      return res.status(400).json({ message: 'Ingresa el código o token recibido.' })
     }
 
     const [userRows] = await query(SQL.userByEmail, [email])
@@ -569,33 +549,18 @@ app.post('/api/auth/activate', async (req, res, next) => {
     if (!user) {
       return res.status(404).json({ message: 'No encontramos una cuenta con este correo.' })
     }
-    if (user.is_active === 1) {
-      return res.json({ alreadyActive: true, message: 'La cuenta ya estaba activada.' })
-    }
-
-    const verification = await validateVerificationToken({
-      userId: user.id,
-      type: 'activation',
-      token,
-      code
-    })
-
-    if (!verification) {
-      return res.status(400).json({ message: 'El código ingresado no es válido o ya expiró.' })
-    }
 
     const nowSql = formatDateForSql(new Date())
-    await query(
-      'UPDATE users SET is_active = 1, email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?',
-      [nowSql, nowSql, user.id]
-    )
+    if (user.is_active === 0 || !user.email_verified_at) {
+      await query(
+        'UPDATE users SET is_active = 1, email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?',
+        [nowSql, nowSql, user.id]
+      )
+    }
 
-    const [profileRows] = await query(SQL.userProfileById, [user.id])
-    const profile = profileRows[0] || user
-    const jwtToken = issueToken(user.id)
     return res.json({
-      token: jwtToken,
-      user: toUserDto({ ...profile, is_active: 1 })
+      alreadyActive: true,
+      message: 'La activación ya no es necesaria. Inicia sesión con tu correo y contraseña.'
     })
   } catch (error) {
     return next(error)
@@ -611,44 +576,19 @@ app.post('/api/auth/resend-activation', async (req, res, next) => {
     const [userRows] = await query(SQL.userByEmail, [email])
     const user = userRows[0]
     if (!user) {
-      return res.json({ message: 'Si la cuenta existe, enviaremos un nuevo código.' })
-    }
-    if (user.is_active === 1) {
-      return res.json({ message: 'Tu cuenta ya está activa. Inicia sesión normalmente.' })
+      return res.json({ message: 'Si la cuenta existe, ya puede iniciar sesión sin códigos.' })
     }
 
-    const channel = user.phone ? 'sms' : 'email'
-    const activation = await createVerificationToken({
-      userId: user.id,
-      type: 'activation',
-      channel,
-      metadata: { email: user.email, phone: user.phone || null }
-    })
-
-    sendVerificationNotification({
-      type: 'activation',
-      code: activation.code,
-      token: activation.token,
-      email: user.email,
-      phone: user.phone || null,
-      channel
-    }).catch((notifyError) => {
-      console.error('[auth] Error reenviando activación:', notifyError)
-    })
-
-    if (process.env.NODE_ENV !== 'production') {
-      console.info('[auth] Reenvío de activación', {
-        email,
-        channel,
-        token: activation.token,
-        code: activation.code
-      })
+    const nowSql = formatDateForSql(new Date())
+    if (user.is_active === 0 || !user.email_verified_at) {
+      await query(
+        'UPDATE users SET is_active = 1, email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?',
+        [nowSql, nowSql, user.id]
+      )
     }
 
     return res.json({
-      message: 'Generamos un nuevo código de activación.',
-      channel,
-      debug: process.env.NODE_ENV === 'production' ? undefined : activation
+      message: 'La activación ya no es necesaria. Inicia sesión con tu correo y contraseña.'
     })
   } catch (error) {
     return next(error)
@@ -778,12 +718,6 @@ app.post('/api/auth/login', async (req, res, next) => {
     if (!user) {
       return res.status(401).json({ message: 'Credenciales inválidas.' })
     }
-    if (user.is_active === 0) {
-      return res.status(403).json({
-        message: 'Tu cuenta aún no está activada. Revisa tu correo o solicita un nuevo código.',
-        requiresActivation: true
-      })
-    }
 
     const isValid = bcrypt.compareSync(password, user.password_hash)
     if (!isValid) {
@@ -791,12 +725,12 @@ app.post('/api/auth/login', async (req, res, next) => {
     }
 
     const now = formatDateForSql(new Date())
-    await query(SQL.updateUserLogin, [now, now, user.id])
+    await query(SQL.updateUserLogin, [now, now, now, user.id])
 
     const token = issueToken(user.id)
     return res.json({
       token,
-      user: toUserDto(user)
+      user: toUserDto({ ...user, email_verified_at: user.email_verified_at || now, is_active: 1 })
     })
   } catch (error) {
     return next(error)

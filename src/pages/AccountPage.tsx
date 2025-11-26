@@ -6,12 +6,7 @@ import { getUserOrders } from '../services/orderService'
 import type { OrderSummary, OrderStatus } from '../types'
 import { formatCurrency } from '../utils/format'
 
-type FormMode = 'login' | 'register' | 'recover' | 'activate'
-
-interface ActivationState {
-  email: string
-  channel: 'email' | 'sms'
-}
+type FormMode = 'login' | 'register' | 'recover'
 
 interface RecoveryState {
   email?: string
@@ -50,8 +45,6 @@ const AccountPage = () => {
     isLoading,
     login,
     register,
-    activate,
-    resendActivation,
     requestPasswordReset,
     resetPassword,
     updateProfile,
@@ -61,7 +54,6 @@ const AccountPage = () => {
   } = useAuth()
   const [mode, setMode] = useState<FormMode>('login')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [activationSubmitting, setActivationSubmitting] = useState(false)
   const [recoverySubmitting, setRecoverySubmitting] = useState(false)
   const [resetSubmitting, setResetSubmitting] = useState(false)
   const [profileSubmitting, setProfileSubmitting] = useState(false)
@@ -70,7 +62,6 @@ const AccountPage = () => {
   const [orders, setOrders] = useState<OrderSummary[]>([])
   const [ordersLoading, setOrdersLoading] = useState(false)
   const [ordersError, setOrdersError] = useState<string | null>(null)
-  const [pendingActivation, setPendingActivation] = useState<ActivationState | null>(null)
   const [pendingRecovery, setPendingRecovery] = useState<RecoveryState | null>(null)
   const [recoveryStep, setRecoveryStep] = useState<'request' | 'confirm'>('request')
   const [profileMessage, setProfileMessage] = useState<string | null>(null)
@@ -84,15 +75,13 @@ const AccountPage = () => {
   const location = useLocation()
   const navigate = useNavigate()
   const redirectPath = (location.state as { from?: string } | null)?.from ?? null
-  const tabMode: FormMode = mode === 'activate' ? 'login' : mode
+  const tabMode: FormMode = mode
   const headingTitleMap: Record<FormMode, string> = {
     login: 'Inicia sesión',
     register: 'Crea tu cuenta',
-    recover: 'Recupera tu acceso',
-    activate: 'Activa tu cuenta'
+    recover: 'Recupera tu acceso'
   }
   const headingTitle = headingTitleMap[mode] ?? headingTitleMap.login
-  const showActivationPanel = mode === 'activate' || Boolean(pendingActivation)
 
   useEffect(() => {
     if (user) {
@@ -192,9 +181,6 @@ const AccountPage = () => {
         const phone = String(formData.get('phone') ?? '').trim()
         const city = String(formData.get('city') ?? '').trim()
         const address = String(formData.get('address') ?? '').trim()
-        const channel = (String(formData.get('channel') ?? 'email').toLowerCase() === 'sms' ? 'sms' : 'email') as
-          | 'email'
-          | 'sms'
         const accepted = formData.get('acceptPolicies') === 'on'
         if (!name) {
           setFormError('Debes ingresar tu nombre completo.')
@@ -206,104 +192,21 @@ const AccountPage = () => {
           setIsSubmitting(false)
           return
         }
-        const registration = await register({ name, email, password, phone, city, address, channel })
+        await register({ name, email, password, phone, city, address })
         formElement.reset()
-        setPendingActivation({
-          email: registration.email,
-          channel: registration.channel
-        })
-        setMode('activate')
         if (!handleRedirectAfterAuth()) {
-          setSuccessMessage('Te enviamos un código de activación. Revisa tu correo o SMS.')
+          setSuccessMessage('Tu cuenta fue creada y ya iniciamos sesión.')
         }
       }
     } catch (err) {
       console.error(err)
-      const data = (err as { data?: Record<string, unknown> | null })?.data
-      if (mode === 'login' && (data as { requiresActivation?: boolean })?.requiresActivation) {
-        setPendingActivation((prev) =>
-          prev ?? {
-            email,
-            channel: 'email'
-          }
-        )
-        setMode('activate')
-        setFormError('Necesitas activar tu cuenta antes de continuar.')
-      } else if (err instanceof Error) {
+      if (err instanceof Error) {
         setFormError(err.message)
       } else {
         serverError()
       }
     } finally {
       setIsSubmitting(false)
-    }
-  }
-
-  const handleActivationSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const formData = new FormData(event.currentTarget)
-    const email = String(formData.get('email') ?? pendingActivation?.email ?? '').trim()
-    const code = String(formData.get('code') ?? '').trim()
-    const token = String(formData.get('token') ?? '').trim()
-
-    if (!email || (!code && !token)) {
-      setFormError('Ingresa el correo y el código recibido (o pega el token de activación).')
-      return
-    }
-
-    setActivationSubmitting(true)
-    setFormError(null)
-    try {
-      const result = await activate({
-        email,
-        code: code || undefined,
-        token: token || undefined
-      })
-      if (result.user) {
-        setPendingActivation(null)
-        setMode('login')
-        if (!handleRedirectAfterAuth()) {
-          setSuccessMessage('Tu cuenta fue activada. Ya puedes continuar.')
-        }
-      } else if (result.alreadyActive) {
-        setMode('login')
-        setSuccessMessage('Tu cuenta ya estaba activa. Inicia sesión para continuar.')
-      }
-    } catch (err) {
-      console.error(err)
-      if (err instanceof Error) {
-        setFormError(err.message)
-      } else {
-        setFormError('No pudimos activar tu cuenta con los datos ingresados.')
-      }
-    } finally {
-      setActivationSubmitting(false)
-    }
-  }
-
-  const handleResendActivation = async () => {
-    if (!pendingActivation?.email) {
-      setFormError('Ingresa primero el correo con el que te registraste.')
-      return
-    }
-    setActivationSubmitting(true)
-    setFormError(null)
-    try {
-      const response = await resendActivation(pendingActivation.email)
-      setPendingActivation({
-        email: pendingActivation.email,
-        channel: response.channel === 'sms' ? 'sms' : 'email'
-      })
-      setSuccessMessage(response.message)
-    } catch (err) {
-      console.error(err)
-      if (err instanceof Error) {
-        setFormError(err.message)
-      } else {
-        setFormError('No pudimos reenviar el código en este momento.')
-      }
-    } finally {
-      setActivationSubmitting(false)
     }
   }
 
@@ -784,40 +687,6 @@ const AccountPage = () => {
                 </button>
               </div>
             </form>
-          )}
-
-          {showActivationPanel && (
-            <div className="account-form__panel">
-              <h3>Activa tu cuenta</h3>
-              <form onSubmit={handleActivationSubmit} noValidate>
-                <label>
-                  Correo electrónico
-                  <input
-                    type="email"
-                    name="email"
-                    defaultValue={pendingActivation?.email}
-                    placeholder="tuemail@ejemplo.com"
-                    required
-                  />
-                </label>
-                <label>
-                  Código de activación
-                  <input type="text" name="code" placeholder="123456" required />
-                </label>
-                <label>
-                  Token de activación (opcional)
-                  <input type="text" name="token" placeholder="Pega el enlace si lo recibiste" />
-                </label>
-                <div className="account-form__actions">
-                  <button type="button" className="btn btn--ghost" onClick={handleResendActivation} disabled={activationSubmitting}>
-                    Reenviar código
-                  </button>
-                  <button type="submit" className="btn btn--primary" disabled={activationSubmitting}>
-                    {activationSubmitting ? 'Validando…' : 'Confirmar activación'}
-                  </button>
-                </div>
-              </form>
-            </div>
           )}
         </div>
       </section>

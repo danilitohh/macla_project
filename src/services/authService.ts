@@ -15,25 +15,9 @@ export interface RegistrationPayload extends Credentials {
 }
 
 export interface RegistrationResponse {
-  requiresActivation: boolean
-  message: string
-  email: string
-  userId: string
-  channel: 'email' | 'sms'
-  debug?: ActivationDebug | null
-}
-
-export interface ActivationDebug {
   token: string
-  code: string
-  expiresAt: string
-  channel: 'email' | 'sms'
-}
-
-export interface ActivationPayload {
-  email: string
-  token?: string
-  code?: string
+  user: User
+  message?: string
 }
 
 export interface RecoveryRequestPayload {
@@ -42,7 +26,10 @@ export interface RecoveryRequestPayload {
   channel?: 'email' | 'sms'
 }
 
-export interface ResetPasswordPayload extends ActivationPayload {
+export interface ResetPasswordPayload {
+  email: string
+  token?: string
+  code?: string
   password: string
 }
 
@@ -61,37 +48,15 @@ export const registerUser = async (payload: RegistrationPayload): Promise<Regist
     method: 'POST',
     body: JSON.stringify(payload)
   })
-  return result
-}
-
-export const activateAccount = async (payload: ActivationPayload) => {
-  const result = await request<{ token?: string; user?: User; alreadyActive?: boolean }>('/auth/activate', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  })
-  if (result.token && result.user) {
+  if (result.token) {
     persistToken(result.token)
   }
   return result
 }
 
-export interface ResendActivationResponse {
-  message: string
-  channel: string
-  debug?: ActivationDebug | null
-}
-
 export interface RecoveryResponse {
   message: string
   channel: string
-  debug?: ActivationDebug | null
-}
-
-export const resendActivation = async (email: string) => {
-  return request<ResendActivationResponse>('/auth/resend-activation', {
-    method: 'POST',
-    body: JSON.stringify({ email })
-  })
 }
 
 export const requestPasswordReset = async (payload: RecoveryRequestPayload) => {

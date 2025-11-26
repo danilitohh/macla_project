@@ -2,23 +2,18 @@ import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AuthContext } from './AuthContext'
 import {
-  activateAccount,
   authenticateUser,
   getActiveUser,
   logoutUser,
   registerUser,
   requestPasswordReset as requestPasswordResetService,
-  resendActivation as resendActivationService,
   resetPassword as resetPasswordService,
   updateUserProfile,
-  type ActivationPayload,
   type Credentials,
   type ProfileUpdatePayload,
   type RecoveryRequestPayload,
   type RecoveryResponse,
   type RegistrationPayload,
-  type RegistrationResponse,
-  type ResendActivationResponse,
   type ResetPasswordPayload
 } from '../services/authService'
 import type { User } from '../types'
@@ -67,10 +62,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   )
 
   const register = useCallback(
-    async (payload: RegistrationPayload): Promise<RegistrationResponse> => {
+    async (payload: RegistrationPayload): Promise<User> => {
       try {
         setError(null)
-        return await registerUser(payload)
+        const result = await registerUser(payload)
+        setUser(result.user)
+        return result.user
       } catch (err) {
         const message = err instanceof Error ? err.message : 'No pudimos crear tu cuenta. Intenta nuevamente.'
         setError(message)
@@ -79,36 +76,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     },
     []
   )
-
-  const activate = useCallback(
-    async (payload: ActivationPayload) => {
-      try {
-        setError(null)
-        const result = await activateAccount(payload)
-        if (result.user) {
-          setUser(result.user)
-        }
-        return result
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'No pudimos activar tu cuenta. Verifica el código.'
-        setError(message)
-        throw err
-      }
-    },
-    []
-  )
-
-  const resendActivation = useCallback(async (email: string): Promise<ResendActivationResponse> => {
-    try {
-      setError(null)
-      return await resendActivationService(email)
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'No pudimos reenviar el código en este momento. Intenta más tarde.'
-      setError(message)
-      throw err
-    }
-  }, [])
 
   const requestPasswordReset = useCallback(
     async (payload: RecoveryRequestPayload): Promise<RecoveryResponse> => {
@@ -170,8 +137,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         error,
         login,
         register,
-        activate,
-        resendActivation,
         requestPasswordReset,
         resetPassword,
         updateProfile,
