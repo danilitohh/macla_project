@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="260" height="86" viewBox="0 0 260 86" fill="none">
+  <defs>
+    <linearGradient id="pink" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ff2fa8"/>
+      <stop offset="100%" stop-color="#ff55c4"/>
+    </linearGradient>
+  </defs>
+  <path d="M18 0h222c10 0 18 8 18 18v38c0 6-3 11-8 14l-26 14c-3 2-6 2-10 2H18C8 86 0 78 0 68V18C0 8 8 0 18 0Z" fill="url(#pink)"/>
+  <text x="130" y="54" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700" fill="#ffffff">TOP SELLER</text>
+</svg>

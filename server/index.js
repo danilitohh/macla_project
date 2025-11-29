@@ -17,7 +17,11 @@ const app = express()
 const PORT = process.env.PORT || 4000
 const JWT_SECRET = process.env.JWT_SECRET || 'macla-dev-secret'
 const TOKEN_EXPIRATION = process.env.JWT_EXPIRATION || '7d'
-const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:4000']
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:4000',
+  'https://macla-project.vercel.app'
+]
 const CLIENT_DIST_PATH = path.join(__dirname, '..', 'dist')
 const CLIENT_INDEX_PATH = path.join(CLIENT_DIST_PATH, 'index.html')
 

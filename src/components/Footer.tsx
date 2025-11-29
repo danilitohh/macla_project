@@ -3,11 +3,11 @@ import { Link } from 'react-router-dom'
 const Footer = () => (
   <footer className="footer">
     <div className="container footer__grid">
-      <div>
+      <div className="footer__card">
         <h4>MACLA Distribuciones S.A.S</h4>
         <p>Innovación en belleza, cuidado personal y accesorios que inspiran emprendimiento.</p>
       </div>
-      <div>
+      <div className="footer__card">
         <h4>Contacto</h4>
         <ul>
           <li>Correo: <a href="mailto:macla.importaciones@outlook.es">macla.importaciones@outlook.es</a></li>
@@ -15,7 +15,7 @@ const Footer = () => (
           <li>Instagram: <a href="https://www.instagram.com/Macla_importaciones" target="_blank" rel="noreferrer">@Macla_importaciones</a></li>
         </ul>
       </div>
-      <div>
+      <div className="footer__card">
         <h4>Legales</h4>
         <ul>
           <li>

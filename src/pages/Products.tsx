@@ -49,7 +49,7 @@ const Products = () => {
         </div>
       </section>
 
-      <section className="section">
+      <section className="section section--catalog">
         <div className="container">
           <div className="filters">
             <div className="filters__categories">

@@ -1,14 +1,48 @@
 import { Link } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import { products, categories } from '../data/products'
 import { shippingOptions, paymentMethods } from '../data/config'
 import { formatCurrency } from '../utils/format'
 import ProductCard from '../components/ProductCard'
 
 const Home = () => {
+  const [showHighlight, setShowHighlight] = useState(false)
   const featuredProducts = products.slice(0, 4)
+
+  useEffect(() => {
+    setShowHighlight(true)
+  }, [])
 
   return (
     <div className="page">
+      {showHighlight && (
+        <div className="modal" role="dialog" aria-modal="true" aria-label="Producto destacado">
+          <div className="modal__content">
+            <img src="/top-seller.svg" alt="Top seller" className="modal__sticker-image" />
+            <button type="button" className="modal__close" onClick={() => setShowHighlight(false)} aria-label="Cerrar anuncio">
+              ×
+            </button>
+            <div className="modal__body">
+              <div className="modal__image">
+                <img src="/plancha.png" alt="Plancha Secadora 2 en 1 MACLA" />
+              </div>
+              <div className="modal__info">
+                <p className="badge badge--muted">Top ventas</p>
+                <h3>Plancha Secadora 2 en 1 MACLA</h3>
+                <p>Nuestro producto más vendido: alisa y seca en una sola pasada con acabado profesional.</p>
+                <div className="modal__actions">
+                  <Link to="/producto/plancha-secadora-2en1" className="btn btn--primary">
+                    Comprar ahora
+                  </Link>
+                  <button type="button" className="btn btn--ghost" onClick={() => setShowHighlight(false)}>
+                    Ver después
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <section className="hero">
         <div className="container hero__content">
           <div>
