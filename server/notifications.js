@@ -14,6 +14,20 @@ const {
   TWILIO_FROM_NUMBER
 } = process.env
 
+const DEFAULT_FROM_EMAIL = 'macla.importaciones2025@gmail.com'
+const RESOLVED_FROM_EMAIL = DEFAULT_FROM_EMAIL
+
+if (SMTP_FROM && SMTP_FROM !== DEFAULT_FROM_EMAIL) {
+  console.warn(
+    `[notifications] SMTP_FROM está configurado como "${SMTP_FROM}", pero se usará "${DEFAULT_FROM_EMAIL}" para los códigos.`
+  )
+}
+if (SMTP_USER && SMTP_USER !== DEFAULT_FROM_EMAIL) {
+  console.warn(
+    `[notifications] SMTP_USER (${SMTP_USER}) no coincide con el remitente ${DEFAULT_FROM_EMAIL}. Asegura que las credenciales SMTP correspondan a ese correo para evitar rechazos.`
+  )
+}
+
 let mailTransport
 let smsClient
 
@@ -91,7 +105,7 @@ const sendEmail = async ({ to, subject, text, html }) => {
     return false
   }
   await transport.sendMail({
-    from: SMTP_FROM || SMTP_USER,
+    from: RESOLVED_FROM_EMAIL,
     to,
     subject,
     text,
