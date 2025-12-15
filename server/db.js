@@ -1,5 +1,7 @@
 const mysql = require('mysql2/promise')
-const { categories, products, shippingOptions, paymentMethods } = require('./seed-data')
+const bcrypt = require('bcryptjs')
+const crypto = require('crypto')
+const { categories, products, shippingOptions, paymentMethods, announcements } = require('./seed-data')
 
 const {
   DB_HOST = 'localhost',
@@ -9,6 +11,9 @@ const {
   DB_NAME = 'macla_store',
   DB_CONNECTION_LIMIT = '10'
 } = process.env
+const { ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME = 'Administrador MACLA' } = process.env
+
+const formatDateForSql = (date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ')
 
 let pool
 
@@ -185,6 +190,21 @@ const createSchemaIfNeeded = async () => {
           ON UPDATE CASCADE ON DELETE CASCADE,
         INDEX idx_product_tags_product (product_id),
         INDEX idx_product_tags_tag (tag)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS announcements (
+        id VARCHAR(64) PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        description TEXT NOT NULL,
+        badge VARCHAR(128) NULL,
+        cta_label VARCHAR(128) NULL,
+        cta_url TEXT NULL,
+        image_url TEXT NULL,
+        sort_order INT UNSIGNED NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `,
     `
@@ -710,6 +730,84 @@ const seedInitialData = async () => {
           [product.id, tag]
         )
       }
+    }
+
+    for (const announcement of announcements) {
+      // eslint-disable-next-line no-await-in-loop
+      await connection.execute(
+        `
+          INSERT INTO announcements (
+            id,
+            title,
+            description,
+            badge,
+            cta_label,
+            cta_url,
+            image_url,
+            sort_order,
+            is_active
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            title = VALUES(title),
+            description = VALUES(description),
+            badge = VALUES(badge),
+            cta_label = VALUES(cta_label),
+            cta_url = VALUES(cta_url),
+            image_url = VALUES(image_url),
+            sort_order = VALUES(sort_order),
+            is_active = VALUES(is_active),
+            updated_at = CURRENT_TIMESTAMP(3)
+        `,
+        [
+          announcement.id,
+          announcement.title,
+          announcement.description,
+          announcement.badge || null,
+          announcement.ctaLabel || null,
+          announcement.ctaUrl || null,
+          announcement.imageUrl || null,
+          announcement.sortOrder || 0,
+          announcement.isActive ? 1 : 0
+        ]
+      )
+    }
+
+    if (ADMIN_EMAIL && ADMIN_PASSWORD) {
+      const email = ADMIN_EMAIL.trim().toLowerCase()
+      const passwordHash = bcrypt.hashSync(ADMIN_PASSWORD.trim(), 10)
+      const name = ADMIN_NAME && ADMIN_NAME.trim() ? ADMIN_NAME.trim() : 'Administrador MACLA'
+      const nowSql = formatDateForSql(new Date())
+      const adminId =
+        typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')
+
+      await connection.execute(
+        `
+          INSERT INTO users (
+            id,
+            name,
+            email,
+            password_hash,
+            phone,
+            city,
+            address_line,
+            email_verified_at,
+            is_active,
+            role,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 1, 'admin', ?, ?)
+          ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            password_hash = VALUES(password_hash),
+            role = 'admin',
+            is_active = 1,
+            email_verified_at = COALESCE(email_verified_at, VALUES(email_verified_at)),
+            updated_at = CURRENT_TIMESTAMP(3)
+        `,
+        [adminId, name, email, passwordHash, nowSql, nowSql, nowSql]
+      )
     }
 
     await connection.commit()

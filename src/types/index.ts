@@ -18,6 +18,7 @@ export interface Product {
   highlights: string[]
   tags?: string[]
   specs?: Record<string, string | number>
+  isActive?: boolean
 }
 
 export interface CartItem {
@@ -29,6 +30,7 @@ export interface User {
   id: string
   name: string
   email: string
+  role?: 'customer' | 'admin'
   phone?: string | null
   city?: string | null
   address?: string | null
@@ -112,4 +114,16 @@ export interface Address {
   notes?: string | null
   isDefaultShipping: boolean
   isDefaultBilling: boolean
+}
+
+export interface Announcement {
+  id: string
+  title: string
+  description: string
+  badge?: string | null
+  ctaLabel?: string | null
+  ctaUrl?: string | null
+  imageUrl?: string | null
+  sortOrder: number
+  isActive: boolean
 }

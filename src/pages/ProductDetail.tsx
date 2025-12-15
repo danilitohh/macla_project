@@ -1,13 +1,66 @@
-import { useMemo } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { products } from '../data/products'
+import { useEffect, useState } from 'react'
+import { useParams, Link, Navigate } from 'react-router-dom'
+import { products as fallbackProducts } from '../data/products'
 import { formatCurrency } from '../utils/format'
 import { useCart } from '../hooks/useCart'
+import type { Product } from '../types'
+import { getProductById } from '../services/catalogService'
 
 const ProductDetail = () => {
   const { id } = useParams<{ id: string }>()
-  const product = useMemo(() => products.find((item) => item.id === id), [id])
+  const [product, setProduct] = useState<Product | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const { addItem } = useCart()
+
+  useEffect(() => {
+    let isMounted = true
+
+    const load = async () => {
+      try {
+        setError(null)
+        const remote = id ? await getProductById(id) : null
+        if (!isMounted) return
+        const fallback = fallbackProducts.find((item) => item.id === id) || null
+        setProduct(remote || fallback || null)
+        if (!remote && !fallback) {
+          setError('Producto no encontrado.')
+        }
+      } catch (err) {
+        console.error('[ProductDetail] Error fetching product', err)
+        if (!isMounted) return
+        const fallback = fallbackProducts.find((item) => item.id === id) || null
+        setProduct(fallback)
+        setError('No pudimos cargar la información más reciente. Mostramos la versión guardada.')
+      } finally {
+        if (isMounted) {
+          setLoading(false)
+        }
+      }
+    }
+
+    load()
+
+    return () => {
+      isMounted = false
+    }
+  }, [id])
+
+  if (!id) {
+    return <Navigate to="/productos" replace />
+  }
+
+  if (loading) {
+    return (
+      <div className="page">
+        <section className="section">
+          <div className="container">
+            <p>Cargando producto…</p>
+          </div>
+        </section>
+      </div>
+    )
+  }
 
   if (!product) {
     return (
@@ -35,6 +88,7 @@ const ProductDetail = () => {
             ))}
           </div>
           <div className="product-detail__info">
+            {error && <p className="muted">{error}</p>}
             <Link to={`/productos?categoria=${product.category}`} className="badge badge--muted">
               {product.category.toUpperCase()}
             </Link>

@@ -1,0 +1,70 @@
+import { request } from './apiClient'
+import type { Announcement, Product } from '../types'
+
+export const getProducts = async (): Promise<Product[]> => {
+  const result = await request<{ products: Product[] }>('/products', { method: 'GET' })
+  return Array.isArray(result.products) ? result.products : []
+}
+
+export const getProductById = async (id: string): Promise<Product | null> => {
+  const result = await request<{ product: Product }>(`/products/${id}`, { method: 'GET' })
+  return result.product ?? null
+}
+
+export const getAnnouncements = async (): Promise<Announcement[]> => {
+  const result = await request<{ announcements: Announcement[] }>('/announcements', { method: 'GET' })
+  return Array.isArray(result.announcements) ? result.announcements : []
+}
+
+export const getAdminProducts = async (): Promise<Product[]> => {
+  const result = await request<{ products: Product[] }>('/admin/products', { method: 'GET' })
+  return Array.isArray(result.products) ? result.products : []
+}
+
+export const createAdminProduct = async (payload: Partial<Product>): Promise<Product> => {
+  const result = await request<{ product: Product }>('/admin/products', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+  return result.product
+}
+
+export const updateAdminProduct = async (id: string, payload: Partial<Product>): Promise<Product> => {
+  const result = await request<{ product: Product }>(`/admin/products/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  })
+  return result.product
+}
+
+export const deleteAdminProduct = async (id: string): Promise<void> => {
+  await request<void>(`/admin/products/${id}`, { method: 'DELETE' })
+}
+
+export const getAdminAnnouncements = async (): Promise<Announcement[]> => {
+  const result = await request<{ announcements: Announcement[] }>('/admin/announcements', { method: 'GET' })
+  return Array.isArray(result.announcements) ? result.announcements : []
+}
+
+export const createAdminAnnouncement = async (payload: Partial<Announcement>): Promise<Announcement> => {
+  const result = await request<{ announcement: Announcement }>('/admin/announcements', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+  return result.announcement
+}
+
+export const updateAdminAnnouncement = async (
+  id: string,
+  payload: Partial<Announcement>
+): Promise<Announcement> => {
+  const result = await request<{ announcement: Announcement }>(`/admin/announcements/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  })
+  return result.announcement
+}
+
+export const deleteAdminAnnouncement = async (id: string): Promise<void> => {
+  await request<void>(`/admin/announcements/${id}`, { method: 'DELETE' })
+}

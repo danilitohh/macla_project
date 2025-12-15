@@ -1,39 +1,88 @@
 import { Link } from 'react-router-dom'
-import { useEffect, useState } from 'react'
-import { products, categories } from '../data/products'
+import { useEffect, useMemo, useState } from 'react'
+import { categories, products as fallbackProducts } from '../data/products'
 import { shippingOptions, paymentMethods } from '../data/config'
 import { formatCurrency } from '../utils/format'
 import ProductCard from '../components/ProductCard'
+import type { Announcement, Product } from '../types'
+import { getAnnouncements, getProducts } from '../services/catalogService'
 
 const Home = () => {
   const [showHighlight, setShowHighlight] = useState(false)
-  const featuredProducts = products.slice(0, 4)
+  const [highlight, setHighlight] = useState<Announcement | null>(null)
+  const [catalog, setCatalog] = useState<Product[]>(fallbackProducts)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    setShowHighlight(true)
+    let isMounted = true
+
+    const loadData = async () => {
+      try {
+        setError(null)
+        const [remoteProducts, announcements] = await Promise.all([getProducts(), getAnnouncements()])
+        if (!isMounted) return
+        setCatalog(remoteProducts.length > 0 ? remoteProducts : fallbackProducts)
+        setHighlight(announcements.find((item) => item.isActive) || announcements[0] || null)
+        setShowHighlight((announcements.find((item) => item.isActive) || announcements[0]) !== undefined)
+      } catch (err) {
+        console.error('[Home] Error loading catalog/announcements', err)
+        if (!isMounted) return
+        setCatalog(fallbackProducts)
+        setHighlight(null)
+        setError('No pudimos cargar las novedades. Mostramos el catálogo base.')
+        setShowHighlight(false)
+      } finally {
+        if (isMounted) {
+          setLoading(false)
+        }
+      }
+    }
+
+    loadData()
+
+    return () => {
+      isMounted = false
+    }
   }, [])
+
+  const featuredProducts = useMemo(() => catalog.slice(0, 4), [catalog])
+
+  useEffect(() => {
+    if (highlight) {
+      setShowHighlight(true)
+    }
+  }, [highlight])
 
   return (
     <div className="page">
-      {showHighlight && (
+      {showHighlight && highlight && (
         <div className="modal" role="dialog" aria-modal="true" aria-label="Producto destacado">
           <div className="modal__content">
-            <img src="/top-seller.svg" alt="Top seller" className="modal__sticker-image" />
+            {highlight.badge && <span className="modal__sticker">{highlight.badge}</span>}
             <button type="button" className="modal__close" onClick={() => setShowHighlight(false)} aria-label="Cerrar anuncio">
               ×
             </button>
             <div className="modal__body">
               <div className="modal__image">
-                <img src="/plancha.png" alt="Plancha Secadora 2 en 1 MACLA" />
+                <img src={highlight.imageUrl || '/hero-macla.png'} alt={highlight.title} />
               </div>
               <div className="modal__info">
-                <p className="badge badge--muted">Top ventas</p>
-                <h3>Plancha Secadora 2 en 1 MACLA</h3>
-                <p>Nuestro producto más vendido: alisa y seca en una sola pasada con acabado profesional.</p>
+                {highlight.badge && <p className="badge badge--muted">{highlight.badge}</p>}
+                <h3>{highlight.title}</h3>
+                <p>{highlight.description}</p>
                 <div className="modal__actions">
-                  <Link to="/producto/plancha-secadora-2en1" className="btn btn--primary">
-                    Comprar ahora
-                  </Link>
+                  {highlight.ctaUrl ? (
+                    highlight.ctaUrl.startsWith('http') ? (
+                      <a className="btn btn--primary" href={highlight.ctaUrl} target="_blank" rel="noreferrer">
+                        {highlight.ctaLabel || 'Ver más'}
+                      </a>
+                    ) : (
+                      <Link to={highlight.ctaUrl} className="btn btn--primary">
+                        {highlight.ctaLabel || 'Ver más'}
+                      </Link>
+                    )
+                  ) : null}
                   <button type="button" className="btn btn--ghost" onClick={() => setShowHighlight(false)}>
                     Ver después
                   </button>
@@ -83,17 +132,21 @@ const Home = () => {
 
       <section className="section">
         <div className="container">
-          <div className="section__header">
-            <h2>Best sellers de temporada</h2>
-            <Link to="/productos" className="link">
-              Ver todos los productos
-            </Link>
-          </div>
+            <div className="section__header">
+              <h2>Best sellers de temporada</h2>
+              <Link to="/productos" className="link">
+                Ver todos los productos
+              </Link>
+            </div>
           <div className="product-grid">
-            {featuredProducts.map((product) => (
-              <ProductCard key={product.id} product={product} />
-            ))}
+            {loading && <p>Cargando catálogo…</p>}
+            {!loading && featuredProducts.length === 0 && <p className="muted">No hay productos para mostrar.</p>}
+            {!loading &&
+              featuredProducts.map((product) => (
+                <ProductCard key={product.id} product={product} />
+              ))}
           </div>
+          {error && <p className="muted">{error}</p>}
         </div>
       </section>
 

@@ -23,6 +23,20 @@ const products = [
   }
 ]
 
+const announcements = [
+  {
+    id: 'destacado-principal',
+    title: 'Plancha Secadora 2 en 1 MACLA',
+    description: 'Nuestro producto más vendido: alisa y seca en una sola pasada con acabado profesional.',
+    badge: 'Top ventas',
+    ctaLabel: 'Comprar ahora',
+    ctaUrl: '/producto/plancha-secadora-2en1',
+    imageUrl: '/plancha.png',
+    sortOrder: 0,
+    isActive: true
+  }
+]
+
 const shippingOptions = [
   {
     id: 'medellin',
@@ -88,6 +102,7 @@ const paymentMethods = [
 module.exports = {
   categories,
   products,
+  announcements,
   shippingOptions,
   paymentMethods
 }

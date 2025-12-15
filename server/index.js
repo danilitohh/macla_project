@@ -155,6 +155,425 @@ const generateNumericCode = () => {
 }
 const addMinutes = (date, minutes) => new Date(date.getTime() + minutes * 60000)
 const sanitizePhone = (value = '') => String(value).replace(/[^\d+]/g, '').slice(0, 20)
+const DEFAULT_CURRENCY = 'COP'
+const normalizeIdentifier = (value = '', fallbackPrefix = 'item') => {
+  const normalized = String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  if (normalized) {
+    return normalized
+  }
+  const random = Math.floor(Math.random() * 1e6)
+  return `${fallbackPrefix}-${random}`
+}
+const createPlaceholders = (values = []) => values.map(() => '?').join(', ')
+
+const loadProductExtras = async (productIds = []) => {
+  const empty = {
+    images: new Map(),
+    features: new Map(),
+    highlights: new Map(),
+    tags: new Map(),
+    specs: new Map()
+  }
+  if (!productIds.length) {
+    return empty
+  }
+
+  const placeholders = createPlaceholders(productIds)
+  const [imageRows] = await query(
+    `SELECT product_id, image_url FROM product_images WHERE product_id IN (${placeholders}) ORDER BY sort_order, id`,
+    productIds
+  )
+  const [featureRows] = await query(
+    `SELECT product_id, feature_text FROM product_features WHERE product_id IN (${placeholders}) ORDER BY sort_order, id`,
+    productIds
+  )
+  const [highlightRows] = await query(
+    `SELECT product_id, highlight_text FROM product_highlights WHERE product_id IN (${placeholders}) ORDER BY sort_order, id`,
+    productIds
+  )
+  const [tagRows] = await query(
+    `SELECT product_id, tag FROM product_tags WHERE product_id IN (${placeholders}) ORDER BY id`,
+    productIds
+  )
+  const [specRows] = await query(
+    `SELECT product_id, spec_key, spec_value FROM product_specs WHERE product_id IN (${placeholders}) ORDER BY sort_order, id`,
+    productIds
+  )
+
+  const extras = {
+    images: new Map(),
+    features: new Map(),
+    highlights: new Map(),
+    tags: new Map(),
+    specs: new Map()
+  }
+
+  for (const row of imageRows) {
+    const list = extras.images.get(row.product_id) || []
+    list.push(row.image_url)
+    extras.images.set(row.product_id, list)
+  }
+  for (const row of featureRows) {
+    const list = extras.features.get(row.product_id) || []
+    list.push(row.feature_text)
+    extras.features.set(row.product_id, list)
+  }
+  for (const row of highlightRows) {
+    const list = extras.highlights.get(row.product_id) || []
+    list.push(row.highlight_text)
+    extras.highlights.set(row.product_id, list)
+  }
+  for (const row of tagRows) {
+    const list = extras.tags.get(row.product_id) || []
+    list.push(row.tag)
+    extras.tags.set(row.product_id, list)
+  }
+  for (const row of specRows) {
+    const current = extras.specs.get(row.product_id) || {}
+    current[row.spec_key] = row.spec_value
+    extras.specs.set(row.product_id, current)
+  }
+
+  return extras
+}
+
+const toProductDto = (row, extras) => {
+  const specs = extras.specs.get(row.id) || {}
+  const specsPayload = Object.keys(specs).length > 0 ? specs : undefined
+
+  return {
+    id: row.id,
+    name: row.name,
+    shortDescription: row.short_description,
+    description: row.description,
+    category: row.category_id,
+    price: safeInteger(row.price_cents, 0),
+    currency: row.currency || DEFAULT_CURRENCY,
+    stock: safeInteger(row.stock, 0),
+    images: extras.images.get(row.id) || [],
+    features: extras.features.get(row.id) || [],
+    highlights: extras.highlights.get(row.id) || [],
+    tags: extras.tags.get(row.id) || [],
+    specs: specsPayload,
+    isActive: Boolean(row.is_active)
+  }
+}
+
+const fetchProductList = async ({ includeInactive = false } = {}) => {
+  const [rows] = await query(includeInactive ? SQL.selectAllProducts : SQL.selectActiveProducts)
+  if (!rows.length) {
+    return []
+  }
+  const extras = await loadProductExtras(rows.map((item) => item.id))
+  return rows.map((row) => toProductDto(row, extras))
+}
+
+const fetchProductById = async (productId, { includeInactive = false } = {}) => {
+  const [rows] = await query(includeInactive ? SQL.selectProductByIdAny : SQL.selectProductByIdActive, [productId])
+  const row = rows[0]
+  if (!row) {
+    return null
+  }
+  const extras = await loadProductExtras([row.id])
+  const [product] = [toProductDto(row, extras)]
+  return product || null
+}
+
+const saveProductWithExtras = async (payload) => {
+  const {
+    id,
+    category,
+    name,
+    shortDescription,
+    description,
+    price,
+    currency = DEFAULT_CURRENCY,
+    stock,
+    images = [],
+    features = [],
+    highlights = [],
+    tags = [],
+    specs = {},
+    isActive = true
+  } = payload
+
+  const connection = await getPool().getConnection()
+  try {
+    await connection.beginTransaction()
+    const nowSql = formatDateForSql(new Date())
+
+    await connection.execute(
+      `
+        INSERT INTO products (
+          id,
+          category_id,
+          name,
+          short_description,
+          description,
+          price_cents,
+          currency,
+          stock,
+          is_active,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          category_id = VALUES(category_id),
+          name = VALUES(name),
+          short_description = VALUES(short_description),
+          description = VALUES(description),
+          price_cents = VALUES(price_cents),
+          currency = VALUES(currency),
+          stock = VALUES(stock),
+          is_active = VALUES(is_active),
+          updated_at = CURRENT_TIMESTAMP(3)
+      `,
+      [
+        id,
+        category,
+        name,
+        shortDescription,
+        description,
+        price,
+        currency,
+        stock,
+        isActive ? 1 : 0,
+        nowSql,
+        nowSql
+      ]
+    )
+
+    await connection.execute('DELETE FROM product_images WHERE product_id = ?', [id])
+    for (const [index, image] of images.entries()) {
+      // eslint-disable-next-line no-await-in-loop
+      await connection.execute(
+        `
+          INSERT INTO product_images (product_id, image_url, sort_order)
+          VALUES (?, ?, ?)
+        `,
+        [id, image, index]
+      )
+    }
+
+    await connection.execute('DELETE FROM product_features WHERE product_id = ?', [id])
+    for (const [index, feature] of features.entries()) {
+      // eslint-disable-next-line no-await-in-loop
+      await connection.execute(
+        `
+          INSERT INTO product_features (product_id, feature_text, sort_order)
+          VALUES (?, ?, ?)
+        `,
+        [id, feature, index]
+      )
+    }
+
+    await connection.execute('DELETE FROM product_highlights WHERE product_id = ?', [id])
+    for (const [index, highlight] of highlights.entries()) {
+      // eslint-disable-next-line no-await-in-loop
+      await connection.execute(
+        `
+          INSERT INTO product_highlights (product_id, highlight_text, sort_order)
+          VALUES (?, ?, ?)
+        `,
+        [id, highlight, index]
+      )
+    }
+
+    await connection.execute('DELETE FROM product_specs WHERE product_id = ?', [id])
+    const specEntries = Object.entries(specs || {})
+    for (const [index, [key, value]] of specEntries.entries()) {
+      // eslint-disable-next-line no-await-in-loop
+      await connection.execute(
+        `
+          INSERT INTO product_specs (product_id, spec_key, spec_value, sort_order)
+          VALUES (?, ?, ?, ?)
+        `,
+        [id, key, String(value), index]
+      )
+    }
+
+    await connection.execute('DELETE FROM product_tags WHERE product_id = ?', [id])
+    for (const tag of tags) {
+      // eslint-disable-next-line no-await-in-loop
+      await connection.execute(
+        `
+          INSERT INTO product_tags (product_id, tag)
+          VALUES (?, ?)
+        `,
+        [id, tag]
+      )
+    }
+
+    await connection.commit()
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+
+  return fetchProductById(id, { includeInactive: true })
+}
+
+const deleteProductCompletely = async (productId) => {
+  await query('DELETE FROM products WHERE id = ?', [productId])
+}
+
+const toAnnouncementDto = (row) => ({
+  id: row.id,
+  title: row.title,
+  description: row.description,
+  badge: row.badge || null,
+  ctaLabel: row.cta_label || null,
+  ctaUrl: row.cta_url || null,
+  imageUrl: row.image_url || null,
+  sortOrder: safeInteger(row.sort_order, 0),
+  isActive: Boolean(row.is_active)
+})
+
+const fetchAnnouncements = async ({ includeInactive = false } = {}) => {
+  const [rows] = await query(includeInactive ? SQL.selectAllAnnouncements : SQL.selectAnnouncements)
+  return rows.map(toAnnouncementDto)
+}
+
+const saveAnnouncement = async (payload) => {
+  const connection = await getPool().getConnection()
+  try {
+    await connection.beginTransaction()
+    await connection.execute(
+      `
+        INSERT INTO announcements (
+          id,
+          title,
+          description,
+          badge,
+          cta_label,
+          cta_url,
+          image_url,
+          sort_order,
+          is_active
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          title = VALUES(title),
+          description = VALUES(description),
+          badge = VALUES(badge),
+          cta_label = VALUES(cta_label),
+          cta_url = VALUES(cta_url),
+          image_url = VALUES(image_url),
+          sort_order = VALUES(sort_order),
+          is_active = VALUES(is_active),
+          updated_at = CURRENT_TIMESTAMP(3)
+      `,
+      [
+        payload.id,
+        payload.title,
+        payload.description,
+        payload.badge || null,
+        payload.ctaLabel || null,
+        payload.ctaUrl || null,
+        payload.imageUrl || null,
+        safeInteger(payload.sortOrder, 0),
+        payload.isActive ? 1 : 0
+      ]
+    )
+    await connection.commit()
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+  const [rows] = await query('SELECT * FROM announcements WHERE id = ? LIMIT 1', [payload.id])
+  const row = rows[0]
+  return row ? toAnnouncementDto(row) : null
+}
+
+const deleteAnnouncement = async (announcementId) => {
+  await query('DELETE FROM announcements WHERE id = ?', [announcementId])
+}
+
+const sanitizeArrayOfText = (value) =>
+  Array.isArray(value)
+    ? value
+        .map((entry) => sanitizeText(entry))
+        .filter(Boolean)
+        .slice(0, 20)
+    : []
+
+const sanitizeSpecs = (value) => {
+  if (!value || typeof value !== 'object') {
+    return {}
+  }
+  const result = {}
+  Object.entries(value).forEach(([key, val]) => {
+    const cleanKey = sanitizeText(key)
+    const cleanVal = sanitizeText(val)
+    if (cleanKey && cleanVal) {
+      result[cleanKey] = cleanVal
+    }
+  })
+  return result
+}
+
+const normalizeProductPayload = (body, { enforceId } = {}) => {
+  const name = sanitizeName(body?.name)
+  const description = sanitizeText(body?.description)
+  const shortDescription = sanitizeText(body?.shortDescription) || description
+  const category = normalizeIdentifier(body?.category || body?.categoryId, 'general')
+  const price = safeInteger(body?.price, 0)
+  const stock = safeInteger(body?.stock, 0)
+  const currency = sanitizeText(body?.currency || DEFAULT_CURRENCY).toUpperCase() || DEFAULT_CURRENCY
+  const idSource = enforceId ? body?.id : body?.id || body?.slug || body?.sku || name
+  const id = enforceId ? normalizeIdentifier(idSource || body?.id, 'product') : normalizeIdentifier(idSource, 'product')
+  const isActive = body?.isActive !== undefined ? Boolean(body.isActive) : true
+
+  return {
+    id,
+    name,
+    shortDescription,
+    description,
+    category,
+    price,
+    currency,
+    stock,
+    images: sanitizeArrayOfText(body?.images || []),
+    features: sanitizeArrayOfText(body?.features || []),
+    highlights: sanitizeArrayOfText(body?.highlights || []),
+    tags: sanitizeArrayOfText(body?.tags || []),
+    specs: sanitizeSpecs(body?.specs),
+    isActive
+  }
+}
+
+const normalizeAnnouncementPayload = (body, fallbackId) => {
+  const title = sanitizeText(body?.title)
+  const description = sanitizeText(body?.description)
+  const badge = sanitizeText(body?.badge)
+  const ctaLabel = sanitizeText(body?.ctaLabel || body?.cta_label)
+  const ctaUrl = sanitizeText(body?.ctaUrl || body?.cta_url)
+  const imageUrl = sanitizeText(body?.imageUrl || body?.image_url)
+  const sortOrder = safeInteger(body?.sortOrder ?? body?.sort_order, 0)
+  const isActive = body?.isActive !== undefined ? Boolean(body.isActive) : true
+  const id = normalizeIdentifier(body?.id || fallbackId || title, 'announcement')
+
+  return {
+    id,
+    title,
+    description,
+    badge,
+    ctaLabel,
+    ctaUrl,
+    imageUrl,
+    sortOrder,
+    isActive
+  }
+}
 
 const createVerificationToken = async ({ userId, type, channel = 'email', metadata = null }) => {
   const now = new Date()
@@ -482,7 +901,42 @@ const SQL = {
     LIMIT 1
   `,
   consumeTokenById: 'UPDATE user_verification_tokens SET consumed_at = ?, updated_at = ? WHERE id = ?',
-  deleteExpiredTokens: 'DELETE FROM user_verification_tokens WHERE expires_at < ?'
+  deleteExpiredTokens: 'DELETE FROM user_verification_tokens WHERE expires_at < ?',
+  selectActiveProducts: `
+    SELECT id, category_id, name, short_description, description, price_cents, currency, stock, is_active
+    FROM products
+    WHERE is_active = 1
+    ORDER BY updated_at DESC
+  `,
+  selectAllProducts: `
+    SELECT id, category_id, name, short_description, description, price_cents, currency, stock, is_active
+    FROM products
+    ORDER BY updated_at DESC
+  `,
+  selectProductByIdActive: `
+    SELECT id, category_id, name, short_description, description, price_cents, currency, stock, is_active
+    FROM products
+    WHERE id = ?
+      AND is_active = 1
+    LIMIT 1
+  `,
+  selectProductByIdAny: `
+    SELECT id, category_id, name, short_description, description, price_cents, currency, stock, is_active
+    FROM products
+    WHERE id = ?
+    LIMIT 1
+  `,
+  selectAnnouncements: `
+    SELECT id, title, description, badge, cta_label, cta_url, image_url, sort_order, is_active
+    FROM announcements
+    WHERE is_active = 1
+    ORDER BY sort_order ASC, updated_at DESC
+  `,
+  selectAllAnnouncements: `
+    SELECT id, title, description, badge, cta_label, cta_url, image_url, sort_order, is_active
+    FROM announcements
+    ORDER BY sort_order ASC, updated_at DESC
+  `
 }
 
 const toUserDto = (row) => ({
@@ -587,6 +1041,40 @@ const mapCartItemRows = (rows) =>
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+
+app.get('/api/announcements', async (_req, res, next) => {
+  try {
+    const list = await fetchAnnouncements({ includeInactive: false })
+    res.json({ announcements: list })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/products', async (_req, res, next) => {
+  try {
+    const products = await fetchProductList({ includeInactive: false })
+    res.json({ products })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/products/:id', async (req, res, next) => {
+  try {
+    const productId = String(req.params.id || '').trim()
+    if (!productId) {
+      return res.status(400).json({ message: 'Producto inválido.' })
+    }
+    const product = await fetchProductById(productId, { includeInactive: false })
+    if (!product) {
+      return res.status(404).json({ message: 'Producto no encontrado.' })
+    }
+    return res.json({ product })
+  } catch (error) {
+    return next(error)
+  }
 })
 
 app.post('/api/auth/register', async (req, res, next) => {
@@ -1563,6 +2051,104 @@ app.get('/api/orders', requireAuth, async (req, res, next) => {
     )
 
     return res.json({ orders: ordersWithItems })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.get('/api/admin/products', requireAuth, requireAdmin, async (_req, res, next) => {
+  try {
+    const products = await fetchProductList({ includeInactive: true })
+    res.json({ products })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/admin/products', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const payload = normalizeProductPayload(req.body)
+    if (!payload.name || !payload.description || !payload.shortDescription || !payload.category) {
+      return res.status(400).json({ message: 'Faltan datos obligatorios del producto.' })
+    }
+    const saved = await saveProductWithExtras(payload)
+    return res.status(201).json({ product: saved })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.put('/api/admin/products/:id', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const productId = String(req.params.id || '').trim()
+    if (!productId) {
+      return res.status(400).json({ message: 'Producto inválido.' })
+    }
+    const payload = normalizeProductPayload({ ...(req.body || {}), id: productId }, { enforceId: true })
+    const saved = await saveProductWithExtras(payload)
+    return res.json({ product: saved })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.delete('/api/admin/products/:id', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const productId = String(req.params.id || '').trim()
+    if (!productId) {
+      return res.status(400).json({ message: 'Producto inválido.' })
+    }
+    await deleteProductCompletely(productId)
+    return res.status(204).send()
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.get('/api/admin/announcements', requireAuth, requireAdmin, async (_req, res, next) => {
+  try {
+    const list = await fetchAnnouncements({ includeInactive: true })
+    res.json({ announcements: list })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/admin/announcements', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const payload = normalizeAnnouncementPayload(req.body, req.body?.title)
+    if (!payload.title || !payload.description) {
+      return res.status(400).json({ message: 'El anuncio necesita título y descripción.' })
+    }
+    const saved = await saveAnnouncement(payload)
+    return res.status(201).json({ announcement: saved })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.put('/api/admin/announcements/:id', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const announcementId = String(req.params.id || '').trim()
+    if (!announcementId) {
+      return res.status(400).json({ message: 'Anuncio inválido.' })
+    }
+    const payload = normalizeAnnouncementPayload({ ...(req.body || {}), id: announcementId }, announcementId)
+    const saved = await saveAnnouncement(payload)
+    return res.json({ announcement: saved })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.delete('/api/admin/announcements/:id', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const announcementId = String(req.params.id || '').trim()
+    if (!announcementId) {
+      return res.status(400).json({ message: 'Anuncio inválido.' })
+    }
+    await deleteAnnouncement(announcementId)
+    return res.status(204).send()
   } catch (error) {
     return next(error)
   }

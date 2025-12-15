@@ -15,6 +15,8 @@ import TermsPage from './pages/TermsPage'
 import NotFound from './pages/NotFound'
 import AccountPage from './pages/AccountPage'
 import ProtectedRoute from './components/ProtectedRoute'
+import AdminRoute from './components/AdminRoute'
+import AdminPage from './pages/AdminPage'
 
 function App() {
   return (
@@ -41,6 +43,14 @@ function App() {
           <Route path="/faq" element={<FAQPage />} />
           <Route path="/politicas" element={<PoliciesPage />} />
           <Route path="/terminos" element={<TermsPage />} />
+          <Route
+            path="/admin"
+            element={
+              <AdminRoute>
+                <AdminPage />
+              </AdminRoute>
+            }
+          />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

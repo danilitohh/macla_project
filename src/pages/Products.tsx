@@ -1,16 +1,46 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import ProductGrid from '../components/ProductGrid'
-import { categories, products } from '../data/products'
+import { categories, products as fallbackProducts } from '../data/products'
+import type { Product } from '../types'
+import { getProducts } from '../services/catalogService'
 
 const Products = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const initialCategory = searchParams.get('categoria') ?? 'todos'
   const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory)
   const [searchTerm, setSearchTerm] = useState('')
+  const [catalog, setCatalog] = useState<Product[]>(fallbackProducts)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let isMounted = true
+    const load = async () => {
+      try {
+        setError(null)
+        const remote = await getProducts()
+        if (!isMounted) return
+        setCatalog(remote.length > 0 ? remote : fallbackProducts)
+      } catch (err) {
+        console.error('[Products] Error fetching catalog', err)
+        if (!isMounted) return
+        setCatalog(fallbackProducts)
+        setError('No pudimos actualizar el catálogo. Mostramos la versión base.')
+      } finally {
+        if (isMounted) {
+          setLoading(false)
+        }
+      }
+    }
+    load()
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   const filteredProducts = useMemo(() => {
-    let filtered = products
+    let filtered = catalog
     if (selectedCategory !== 'todos') {
       filtered = filtered.filter((product) => product.category === selectedCategory)
     }
@@ -80,7 +110,8 @@ const Products = () => {
               />
             </div>
           </div>
-          <ProductGrid products={filteredProducts} />
+          {loading ? <p>Cargando productos…</p> : <ProductGrid products={filteredProducts} />}
+          {error && <p className="muted">{error}</p>}
         </div>
       </section>
     </div>
