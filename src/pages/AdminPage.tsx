@@ -378,18 +378,9 @@ const AdminPage = () => {
             <p>Cargando productos…</p>
           ) : (
             <div className="admin-grid">
-              <div>
+              <div className="card card--form">
                 <h3>{editingProductId ? 'Editar producto' : 'Crear producto'}</h3>
                 <form className="form" onSubmit={handleProductSubmit}>
-                  <label>
-                    ID (slug)
-                    <input
-                      type="text"
-                      value={productForm.id}
-                      onChange={(event) => setProductForm({ ...productForm, id: event.target.value })}
-                      placeholder="plancha-secadora-2en1"
-                    />
-                  </label>
                   <label>
                     Nombre
                     <input
@@ -397,15 +388,6 @@ const AdminPage = () => {
                       required
                       value={productForm.name}
                       onChange={(event) => setProductForm({ ...productForm, name: event.target.value })}
-                    />
-                  </label>
-                  <label>
-                    Descripción corta
-                    <input
-                      type="text"
-                      required
-                      value={productForm.shortDescription}
-                      onChange={(event) => setProductForm({ ...productForm, shortDescription: event.target.value })}
                     />
                   </label>
                   <label>
