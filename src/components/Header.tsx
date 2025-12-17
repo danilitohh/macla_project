@@ -15,6 +15,8 @@ const Header = () => {
   const { totalItems } = useCart()
   const { user, isAuthenticated } = useAuth()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const adminItems = user?.role === 'admin' ? [{ to: '/admin', label: 'Admin' }] : []
+  const fullNavItems = [...navItems, ...adminItems]
 
   return (
     <header className="header">
@@ -24,7 +26,7 @@ const Header = () => {
           <span className="sr-only">MACLA Distribuciones</span>
         </Link>
         <nav className={`header__nav ${isMobileMenuOpen ? 'is-open' : ''}`}>
-          {navItems.map((item) => (
+          {fullNavItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
