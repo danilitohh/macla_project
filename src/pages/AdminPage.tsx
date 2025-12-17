@@ -22,9 +22,7 @@ const asList = (value: string) =>
 const toMultiline = (items?: string[]) => (items && items.length ? items.join('\n') : '')
 
 type ProductFormState = {
-  id: string
   name: string
-  shortDescription: string
   description: string
   category: Category
   price: string
@@ -32,28 +30,22 @@ type ProductFormState = {
   images: string
   features: string
   highlights: string
-  tags: string
 }
 
 const defaultProductForm: ProductFormState = {
-  id: '',
   name: '',
-  shortDescription: '',
   description: '',
   category: categories[0]?.id || 'planchas',
   price: '0',
   stock: '0',
   images: '',
   features: '',
-  highlights: '',
-  tags: ''
+  highlights: ''
 }
 
 const defaultAnnouncementForm: Record<string, string> = {
-  id: '',
   title: '',
   description: '',
-  badge: '',
   ctaLabel: '',
   ctaUrl: '',
   imageUrl: '',
@@ -136,11 +128,19 @@ const AdminPage = () => {
   const handleProductSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     try {
+      const description = productForm.description.trim()
+      const shortDescription = description.slice(0, 140) || description || productForm.name.trim()
+      const generatedId = productForm.name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+
       const payload: Partial<Product> = {
-        id: productForm.id || editingProductId || undefined,
+        id: editingProductId || generatedId,
         name: productForm.name.trim(),
-        shortDescription: productForm.shortDescription.trim(),
-        description: productForm.description.trim(),
+        shortDescription,
+        description,
         category: productForm.category,
         price: Number(productForm.price) || 0,
         stock: Number(productForm.stock) || 0,
@@ -148,7 +148,7 @@ const AdminPage = () => {
         images: asList(productForm.images),
         features: asList(productForm.features),
         highlights: asList(productForm.highlights),
-        tags: asList(productForm.tags),
+        tags: [],
         isActive: true
       }
 
@@ -177,10 +177,9 @@ const AdminPage = () => {
     event.preventDefault()
     try {
       const payload: Partial<Announcement> = {
-        id: announcementForm.id || editingAnnouncementId || undefined,
+        id: editingAnnouncementId || announcementForm.title.toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, ''),
         title: announcementForm.title.trim(),
         description: announcementForm.description.trim(),
-        badge: announcementForm.badge || null,
         ctaLabel: announcementForm.ctaLabel || null,
         ctaUrl: announcementForm.ctaUrl || null,
         imageUrl: announcementForm.imageUrl || null,
@@ -212,27 +211,22 @@ const AdminPage = () => {
   const startEditProduct = (product: Product) => {
     setEditingProductId(product.id)
     setProductForm({
-      id: product.id,
       name: product.name,
-      shortDescription: product.shortDescription,
       description: product.description,
       category: product.category,
       price: String(product.price),
       stock: String(product.stock),
       images: product.images.join('\n'),
       features: toMultiline(product.features),
-      highlights: toMultiline(product.highlights),
-      tags: product.tags?.join(', ') || ''
+      highlights: toMultiline(product.highlights)
     })
   }
 
   const startEditAnnouncement = (announcement: Announcement) => {
     setEditingAnnouncementId(announcement.id)
     setAnnouncementForm({
-      id: announcement.id,
       title: announcement.title,
       description: announcement.description,
-      badge: announcement.badge || '',
       ctaLabel: announcement.ctaLabel || '',
       ctaUrl: announcement.ctaUrl || '',
       imageUrl: announcement.imageUrl || '',
@@ -264,6 +258,9 @@ const AdminPage = () => {
         <div className="container">
           <h1>Panel admin MACLA</h1>
           <p>Gestiona anuncios destacados y catálogo de productos. Usuario: {user?.email}</p>
+          <p className="muted">
+            Carga imágenes desde tu equipo (se guardan como data URL) y define el destino del botón en cada anuncio.
+          </p>
           {feedback && <p className="muted">{feedback}</p>}
         </div>
       </section>
@@ -275,18 +272,9 @@ const AdminPage = () => {
             <p>Cargando anuncios…</p>
           ) : (
             <div className="admin-grid">
-              <div>
+              <div className="card card--form">
                 <h3>{editingAnnouncementId ? 'Editar anuncio' : 'Crear anuncio'}</h3>
                 <form className="form" onSubmit={handleAnnouncementSubmit}>
-                  <label>
-                    ID (opcional)
-                    <input
-                      type="text"
-                      value={announcementForm.id}
-                      onChange={(event) => setAnnouncementForm({ ...announcementForm, id: event.target.value })}
-                      placeholder="anuncio-destacado"
-                    />
-                  </label>
                   <label>
                     Título
                     <input
@@ -307,14 +295,6 @@ const AdminPage = () => {
                     />
                   </label>
                   <label>
-                    Etiqueta (badge)
-                    <input
-                      type="text"
-                      value={announcementForm.badge}
-                      onChange={(event) => setAnnouncementForm({ ...announcementForm, badge: event.target.value })}
-                    />
-                  </label>
-                  <label>
                     Texto botón
                     <input
                       type="text"
@@ -328,7 +308,9 @@ const AdminPage = () => {
                       type="text"
                       value={announcementForm.ctaUrl}
                       onChange={(event) => setAnnouncementForm({ ...announcementForm, ctaUrl: event.target.value })}
+                      placeholder="https://destino.com o /ruta-interna"
                     />
+                    <p className="muted">Define a dónde lleva el botón (URL externa o ruta interna de la tienda).</p>
                   </label>
                   <label>
                     Imagen
@@ -434,37 +416,39 @@ const AdminPage = () => {
                       onChange={(event) => setProductForm({ ...productForm, description: event.target.value })}
                     />
                   </label>
-                  <label>
-                    Categoría
-                  <select
-                      value={productForm.category}
-                      onChange={(event) =>
-                        setProductForm({ ...productForm, category: event.target.value as Category })
-                      }
-                    >
-                      {categories.map((category) => (
-                        <option key={category.id} value={category.id}>
-                          {category.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Precio (COP)
-                    <input
-                      type="number"
-                      value={productForm.price}
-                      onChange={(event) => setProductForm({ ...productForm, price: event.target.value })}
-                    />
-                  </label>
-                  <label>
-                    Stock
-                    <input
-                      type="number"
-                      value={productForm.stock}
-                      onChange={(event) => setProductForm({ ...productForm, stock: event.target.value })}
-                    />
-                  </label>
+                  <div className="form__row">
+                    <label className="form__row-item">
+                      Categoría
+                      <select
+                        value={productForm.category}
+                        onChange={(event) =>
+                          setProductForm({ ...productForm, category: event.target.value as Category })
+                        }
+                      >
+                        {categories.map((category) => (
+                          <option key={category.id} value={category.id}>
+                            {category.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="form__row-item">
+                      Precio (COP)
+                      <input
+                        type="number"
+                        value={productForm.price}
+                        onChange={(event) => setProductForm({ ...productForm, price: event.target.value })}
+                      />
+                    </label>
+                    <label className="form__row-item">
+                      Stock
+                      <input
+                        type="number"
+                        value={productForm.stock}
+                        onChange={(event) => setProductForm({ ...productForm, stock: event.target.value })}
+                      />
+                    </label>
+                  </div>
                   <label>
                     Imágenes
                     <input
@@ -497,13 +481,6 @@ const AdminPage = () => {
                       onChange={(event) => setProductForm({ ...productForm, highlights: event.target.value })}
                     />
                   </label>
-                  <label>
-                    Tags (separados por coma o salto de línea)
-                    <textarea
-                      value={productForm.tags}
-                      onChange={(event) => setProductForm({ ...productForm, tags: event.target.value })}
-                    />
-                  </label>
                   <div className="form__actions">
                     <button type="submit" className="btn btn--primary">
                       {editingProductId ? 'Actualizar producto' : 'Crear producto'}
@@ -514,7 +491,7 @@ const AdminPage = () => {
                   </div>
                 </form>
               </div>
-              <div>
+              <div className="card">
                 <h3>Listado ({products.length})</h3>
                 <ul className="list">
                   {products.map((product) => (
