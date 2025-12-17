@@ -331,12 +331,7 @@ const AdminPage = () => {
                     />
                   </label>
                   <label>
-                    Imagen (URL)
-                    <input
-                      type="text"
-                      value={announcementForm.imageUrl}
-                      onChange={(event) => setAnnouncementForm({ ...announcementForm, imageUrl: event.target.value })}
-                    />
+                    Imagen
                     <input
                       type="file"
                       accept="image/*"
@@ -348,7 +343,7 @@ const AdminPage = () => {
                         event.target.value = ''
                       }}
                     />
-                    <p className="muted">Sube una imagen (data URL) o pega una URL pública.</p>
+                    <p className="muted">Sube una imagen (se guarda como data URL en el anuncio).</p>
                   </label>
                   <label>
                     Orden
@@ -471,12 +466,7 @@ const AdminPage = () => {
                     />
                   </label>
                   <label>
-                    Imágenes (una por línea)
-                    <textarea
-                      value={productForm.images}
-                      onChange={(event) => setProductForm({ ...productForm, images: event.target.value })}
-                      placeholder="/plancha.png"
-                    />
+                    Imágenes
                     <input
                       type="file"
                       multiple
@@ -486,12 +476,12 @@ const AdminPage = () => {
                         if (!urls.length) return
                         setProductForm((prev) => ({
                           ...prev,
-                          images: [prev.images, ...urls].filter(Boolean).join('\n')
+                          images: urls.join('\n')
                         }))
                         event.target.value = ''
                       }}
                     />
-                    <p className="muted">Sube imágenes (se guardan como data URL) o pega URLs externas.</p>
+                    <p className="muted">Sube imágenes (se guardan como data URL en el producto).</p>
                   </label>
                   <label>
                     Características (una por línea)
