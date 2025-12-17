@@ -62,6 +62,9 @@ const AdminPage = () => {
   const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [feedback, setFeedback] = useState<string | null>(null)
+  const [productSearch, setProductSearch] = useState('')
+  const [productPage, setProductPage] = useState(1)
+  const pageSize = 10
 
   const readFilesAsDataUrls = async (fileList: FileList | null): Promise<string[]> => {
     if (!fileList || fileList.length === 0) return []
@@ -84,6 +87,24 @@ const AdminPage = () => {
     () => announcements.filter((item) => item.isActive),
     [announcements]
   )
+
+  const filteredProducts = useMemo(() => {
+    const term = productSearch.trim().toLowerCase()
+    if (!term) return products
+    return products.filter(
+      (item) =>
+        item.name.toLowerCase().includes(term) ||
+        item.description.toLowerCase().includes(term) ||
+        item.category.toLowerCase().includes(term)
+    )
+  }, [products, productSearch])
+
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize))
+  const currentPage = Math.min(productPage, totalPages)
+  const pagedProducts = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredProducts.slice(start, start + pageSize)
+  }, [filteredProducts, currentPage])
 
   useEffect(() => {
     let isMounted = true
@@ -474,9 +495,20 @@ const AdminPage = () => {
                 </form>
               </div>
               <div className="card">
-                <h3>Listado ({products.length})</h3>
+                <div className="list__header">
+                  <h3>Listado ({filteredProducts.length})</h3>
+                  <input
+                    type="search"
+                    placeholder="Buscar por nombre, categoría o descripción"
+                    value={productSearch}
+                    onChange={(event) => {
+                      setProductSearch(event.target.value)
+                      setProductPage(1)
+                    }}
+                  />
+                </div>
                 <ul className="list">
-                  {products.map((product) => (
+                  {pagedProducts.map((product) => (
                     <li key={product.id} className="list__item">
                       <div>
                         <strong>{product.name}</strong> <span className="badge badge--muted">{product.category}</span>{' '}
@@ -493,6 +525,27 @@ const AdminPage = () => {
                     </li>
                   ))}
                 </ul>
+                <div className="pagination">
+                  <button
+                    type="button"
+                    className="btn btn--ghost"
+                    disabled={currentPage <= 1}
+                    onClick={() => setProductPage((p) => Math.max(1, p - 1))}
+                  >
+                    Anterior
+                  </button>
+                  <span className="muted">
+                    Página {currentPage} de {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn--ghost"
+                    disabled={currentPage >= totalPages}
+                    onClick={() => setProductPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    Siguiente
+                  </button>
+                </div>
               </div>
             </div>
           )}
