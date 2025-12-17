@@ -71,6 +71,23 @@ const AdminPage = () => {
   const [loading, setLoading] = useState(true)
   const [feedback, setFeedback] = useState<string | null>(null)
 
+  const readFilesAsDataUrls = async (fileList: FileList | null): Promise<string[]> => {
+    if (!fileList || fileList.length === 0) return []
+    const files = Array.from(fileList)
+    const dataUrls = await Promise.all(
+      files.map(
+        (file) =>
+          new Promise<string>((resolve) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+            reader.onerror = () => resolve('')
+            reader.readAsDataURL(file)
+          })
+      )
+    )
+    return dataUrls.filter(Boolean)
+  }
+
   const activeAnnouncements = useMemo(
     () => announcements.filter((item) => item.isActive),
     [announcements]
@@ -320,6 +337,18 @@ const AdminPage = () => {
                       value={announcementForm.imageUrl}
                       onChange={(event) => setAnnouncementForm({ ...announcementForm, imageUrl: event.target.value })}
                     />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={async (event) => {
+                        const urls = await readFilesAsDataUrls(event.target.files)
+                        if (!urls.length) return
+                        const [first] = urls
+                        setAnnouncementForm((prev) => ({ ...prev, imageUrl: first }))
+                        event.target.value = ''
+                      }}
+                    />
+                    <p className="muted">Sube una imagen (data URL) o pega una URL pública.</p>
                   </label>
                   <label>
                     Orden
@@ -448,6 +477,21 @@ const AdminPage = () => {
                       onChange={(event) => setProductForm({ ...productForm, images: event.target.value })}
                       placeholder="/plancha.png"
                     />
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/*"
+                      onChange={async (event) => {
+                        const urls = await readFilesAsDataUrls(event.target.files)
+                        if (!urls.length) return
+                        setProductForm((prev) => ({
+                          ...prev,
+                          images: [prev.images, ...urls].filter(Boolean).join('\n')
+                        }))
+                        event.target.value = ''
+                      }}
+                    />
+                    <p className="muted">Sube imágenes (se guardan como data URL) o pega URLs externas.</p>
                   </label>
                   <label>
                     Características (una por línea)
