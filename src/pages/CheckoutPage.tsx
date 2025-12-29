@@ -9,6 +9,14 @@ import { createAddress, getAddresses } from '../services/addressService'
 import type { OrderPayload, OrderCustomer, OrderSummary, OrderItemSummary, Address } from '../types'
 import { trackEvent } from '../utils/analytics'
 import { useAuth } from '../hooks/useAuth'
+import { getWompiConfig, verifyWompiTransaction } from '../services/paymentService'
+import { loadScript } from '../utils/loadScript'
+
+declare global {
+  interface Window {
+    WidgetCheckout?: any
+  }
+}
 
 const CheckoutPage = () => {
   const { items, subtotal, clearCart } = useCart()
@@ -42,6 +50,8 @@ const CheckoutPage = () => {
   const [discountMessage, setDiscountMessage] = useState<string | null>(null)
   const [discountError, setDiscountError] = useState<string | null>(null)
   const [validatingDiscount, setValidatingDiscount] = useState(false)
+  const [wompiStatus, setWompiStatus] = useState<'idle' | 'ready' | 'processing' | 'paid' | 'error'>('idle')
+  const [wompiError, setWompiError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -123,6 +133,53 @@ const CheckoutPage = () => {
   const handleInputChange = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = event.currentTarget
     setFormValues((prev) => ({ ...prev, [name]: value }))
+  }
+
+  const startWompiCheckout = async (order: OrderSummary) => {
+    try {
+      setWompiStatus('processing')
+      setWompiError(null)
+      const config = await getWompiConfig()
+      await loadScript('https://checkout.wompi.co/widget.js')
+
+      const amountInCents = Math.max(0, Math.round(order.total)) * 100
+      const widget = new window.WidgetCheckout({
+        currency: order.currency,
+        amountInCents,
+        reference: order.code,
+        publicKey: config.publicKey,
+        redirectUrl: config.redirectUrl,
+        customerData: {
+          email: formValues.email,
+          fullName: formValues.name,
+          phoneNumber: formValues.phone
+        }
+      })
+
+      setWompiStatus('ready')
+      widget.open((result: any) => {
+        const transactionId = result?.transaction?.id
+        if (transactionId) {
+          setWompiStatus('processing')
+          verifyWompiTransaction({ transactionId, orderCode: order.code })
+            .then((res) => {
+              setWompiStatus(res.status === 'paid' ? 'paid' : 'ready')
+              if (res.status === 'paid') {
+                setSubmittedOrder((prev) => (prev ? { ...prev, status: 'paid' } : prev))
+              }
+            })
+            .catch((err) => {
+              console.error('[Wompi] No se pudo confirmar el pago', err)
+              setWompiStatus('error')
+              setWompiError('No pudimos confirmar el pago. Verifica en tu banco o intenta nuevamente.')
+            })
+        }
+      })
+    } catch (error) {
+      console.error('[Wompi] Error iniciando checkout', error)
+      setWompiStatus('error')
+      setWompiError('No pudimos abrir el checkout de Wompi. Intenta nuevamente.')
+    }
   }
 
   const handleAddressSelect = (address: Address) => {
@@ -211,6 +268,9 @@ const CheckoutPage = () => {
       const order = await submitOrder(orderData)
       setSubmittedOrder(order)
       clearCart()
+      if (payment?.id === 'pasarela') {
+        startWompiCheckout(order)
+      }
       if (saveAddress) {
         createAddress({
           label: addressLabel || 'Mi dirección',
@@ -323,6 +383,26 @@ const CheckoutPage = () => {
                 Modalidad de envío:{' '}
                 {submittedOrder.shippingOption?.label ?? 'Definiremos los detalles de entrega contigo.'}
               </p>
+              {submittedOrder.paymentMethod?.id === 'pasarela' && (
+                <div className="payment-box">
+                  <p>
+                    Completa tu pago con Wompi para marcar el pedido como pagado. Si ya pagaste, intentaremos verificar
+                    automáticamente.
+                  </p>
+                  {wompiStatus !== 'paid' && (
+                    <button
+                      type="button"
+                      className="btn btn--primary"
+                      onClick={() => startWompiCheckout(submittedOrder)}
+                      disabled={wompiStatus === 'processing'}
+                    >
+                      {wompiStatus === 'processing' ? 'Abriendo Wompi…' : 'Pagar con Wompi'}
+                    </button>
+                  )}
+                  {wompiStatus === 'paid' && <p className="muted">Pago confirmado. ¡Gracias!</p>}
+                  {wompiError && <p className="error">{wompiError}</p>}
+                </div>
+              )}
               {submittedOrder.discount > 0 && (
                 <p className="muted">
                   Descuento aplicado: -{formatCurrency(submittedOrder.discount)}

@@ -147,6 +147,12 @@ const TOKEN_CONFIG = {
   password_reset: Number(process.env.PASSWORD_RESET_TOKEN_EXPIRES_MINUTES || 15)
 }
 
+const WOMPI_PUBLIC_KEY = process.env.WOMPI_PUBLIC_KEY || ''
+const WOMPI_PRIVATE_KEY = process.env.WOMPI_PRIVATE_KEY || ''
+const WOMPI_REDIRECT_URL = process.env.WOMPI_REDIRECT_URL || ''
+const WOMPI_ENV = process.env.WOMPI_ENV === 'production' ? 'production' : 'sandbox'
+const WOMPI_BASE_URL = WOMPI_ENV === 'production' ? 'https://production.wompi.co' : 'https://sandbox.wompi.co'
+
 const hashToken = (value) => crypto.createHash('sha256').update(value).digest('hex')
 const generateRawToken = () => crypto.randomBytes(32).toString('hex')
 const generateNumericCode = () => {
@@ -575,6 +581,151 @@ const normalizeAnnouncementPayload = (body, fallbackId) => {
   }
 }
 
+const upsertOrderPayment = async ({ orderId, paymentMethod = 'pasarela', status, reference, amountCents, metadata }) => {
+  const nowSql = formatDateForSql(new Date())
+  const processedAt = status === 'completed' || status === 'authorized' ? nowSql : null
+  const metadataJson = metadata ? JSON.stringify(metadata) : null
+
+  const [updateResult] = await query(SQL.updateOrderPaymentStatus, [
+    status,
+    reference || null,
+    processedAt,
+    metadataJson,
+    orderId,
+    paymentMethod
+  ])
+
+  if (updateResult.affectedRows === 0) {
+    await query(SQL.insertOrderPayment, [
+      orderId,
+      paymentMethod,
+      reference || null,
+      status,
+      amountCents,
+      processedAt,
+      metadataJson
+    ])
+  }
+}
+
+const createInvoiceForOrder = async ({ order, items, taxRate = 0 }) => {
+  const [existing] = await query(SQL.findInvoiceByOrder, [order.id])
+  const invoice = existing[0]
+  if (invoice) {
+    return invoice
+  }
+
+  const nowSql = formatDateForSql(new Date())
+  const dueSql = formatDateForSql(addMinutes(new Date(), 30 * 24 * 60))
+  const subtotal = safeInteger(order.subtotal_cents, 0)
+  const total = safeInteger(order.total_cents, subtotal)
+  const taxCents = Math.floor((subtotal * taxRate) / 100)
+  const invoiceNumber = `INV-${order.code}`
+  const metadata = {
+    orderCode: order.code
+  }
+
+  const [insertResult] = await query(SQL.insertInvoice, [
+    order.id,
+    invoiceNumber,
+    nowSql,
+    dueSql,
+    subtotal,
+    taxCents,
+    total,
+    order.currency || 'COP',
+    null,
+    JSON.stringify(metadata)
+  ])
+  const invoiceId = insertResult.insertId
+
+  for (const row of items) {
+    const quantity = safeInteger(row.quantity, 0)
+    const unitPrice = safeInteger(row.unit_price_cents, 0)
+    const lineTotal = safeInteger(row.line_total_cents, unitPrice * quantity)
+    // eslint-disable-next-line no-await-in-loop
+    await query(SQL.insertInvoiceItem, [
+      invoiceId,
+      row.id || null,
+      row.product_name || row.product_sku || row.product_id || 'Producto',
+      quantity,
+      unitPrice,
+      taxRate,
+      Math.floor((unitPrice * quantity * taxRate) / 100),
+      lineTotal
+    ])
+  }
+
+  return { id: invoiceId, invoice_number: invoiceNumber, status: 'issued' }
+}
+
+const fetchWompiTransaction = async (transactionId) => {
+  if (!WOMPI_PRIVATE_KEY || !transactionId) {
+    throw new Error('WOMPI no está configurado en el backend.')
+  }
+  const response = await fetch(`${WOMPI_BASE_URL}/v1/transactions/${transactionId}`, {
+    headers: {
+      Authorization: `Bearer ${WOMPI_PRIVATE_KEY}`
+    }
+  })
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`No se pudo consultar la transacción Wompi: ${response.status} ${text}`)
+  }
+  const data = await response.json()
+  return data?.data || null
+}
+
+const markOrderPaidFromWompi = async ({ orderId, orderCode, userId, transaction }) => {
+  const status = transaction?.status
+  const amount = safeInteger(transaction?.amount_in_cents, 0)
+  const reference = transaction?.reference || transaction?.id
+  const nowSql = formatDateForSql(new Date())
+
+  const [orderRows] = await query(
+    `
+      SELECT id, user_id, status, subtotal_cents, shipping_cost_cents, discount_cents, total_cents, currency
+      FROM orders
+      WHERE id = ? AND code = ? AND user_id = ?
+      LIMIT 1
+    `,
+    [orderId, orderCode, userId]
+  )
+  const order = orderRows[0]
+  if (!order) {
+    throw new Error('Pedido no encontrado para confirmar el pago.')
+  }
+
+  const [itemRows] = await query(SQL.orderItemsByOrderId, [orderId])
+
+  if (status === 'APPROVED') {
+    await query('UPDATE orders SET status = ?, updated_at = ? WHERE id = ?', ['paid', nowSql, orderId])
+    await query(SQL.insertOrderStatusHistory, [orderId, 'paid', 'wompi', 'Pago aprobado por Wompi'])
+    await upsertOrderPayment({
+      orderId,
+      paymentMethod: 'pasarela',
+      status: 'completed',
+      reference,
+      amountCents: amount,
+      metadata: transaction
+    })
+    await createInvoiceForOrder({ order, items: itemRows })
+    return { status: 'paid' }
+  }
+
+  const normalizedStatus = status === 'DECLINED' ? 'failed' : 'pending'
+  await upsertOrderPayment({
+    orderId,
+    paymentMethod: 'pasarela',
+    status: normalizedStatus,
+    reference,
+    amountCents: amount,
+    metadata: transaction
+  })
+
+  return { status: normalizedStatus }
+}
+
 const createVerificationToken = async ({ userId, type, channel = 'email', metadata = null }) => {
   const now = new Date()
   const expiresMinutes = TOKEN_CONFIG[type] && Number.isFinite(TOKEN_CONFIG[type]) ? TOKEN_CONFIG[type] : 15
@@ -936,6 +1087,66 @@ const SQL = {
     SELECT id, title, description, badge, cta_label, cta_url, image_url, sort_order, is_active
     FROM announcements
     ORDER BY sort_order ASC, updated_at DESC
+  `,
+  orderByCode: `
+    SELECT *
+    FROM orders
+    WHERE code = ?
+      AND user_id = ?
+    LIMIT 1
+  `,
+  insertOrderPayment: `
+    INSERT INTO order_payments (
+      order_id,
+      payment_method,
+      transaction_reference,
+      status,
+      amount_cents,
+      processed_at,
+      metadata_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+  updateOrderPaymentStatus: `
+    UPDATE order_payments
+    SET status = ?, transaction_reference = COALESCE(?, transaction_reference), processed_at = ?, metadata_json = ?
+    WHERE order_id = ?
+      AND payment_method = ?
+  `,
+  findInvoiceByOrder: `
+    SELECT id, invoice_number, status
+    FROM invoices
+    WHERE order_id = ?
+    LIMIT 1
+  `,
+  insertInvoice: `
+    INSERT INTO invoices (
+      order_id,
+      invoice_number,
+      status,
+      issued_at,
+      due_at,
+      subtotal_cents,
+      tax_cents,
+      total_cents,
+      currency,
+      notes,
+      metadata_json
+    )
+    VALUES (?, ?, 'issued', ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+  insertInvoiceItem: `
+    INSERT INTO invoice_items (
+      invoice_id,
+      order_item_id,
+      description,
+      quantity,
+      unit_price_cents,
+      tax_rate,
+      tax_cents,
+      line_total_cents
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `
 }
 
@@ -1049,6 +1260,59 @@ app.get('/api/announcements', async (_req, res, next) => {
     res.json({ announcements: list })
   } catch (error) {
     next(error)
+  }
+})
+
+app.get('/api/payments/wompi/config', requireAuth, async (req, res) => {
+  if (!WOMPI_PUBLIC_KEY) {
+    return res.status(400).json({ message: 'Wompi no está configurado en el servidor.' })
+  }
+  const origin =
+    (req.headers.referer && req.headers.referer.split('/').slice(0, 3).join('/')) ||
+    `${req.protocol}://${req.get('host')}`
+  const redirectUrl = WOMPI_REDIRECT_URL || `${origin}/pago/wompi`
+  return res.json({
+    publicKey: WOMPI_PUBLIC_KEY,
+    redirectUrl,
+    environment: WOMPI_ENV,
+    currency: 'COP'
+  })
+})
+
+app.post('/api/payments/wompi/verify', requireAuth, async (req, res, next) => {
+  try {
+    const transactionId = sanitizeText(req.body.transactionId)
+    const orderCode = sanitizeText(req.body.orderCode)
+    if (!transactionId || !orderCode) {
+      return res.status(400).json({ message: 'Faltan datos para validar el pago.' })
+    }
+    const [orderRows] = await query(SQL.orderByCode, [orderCode, req.userId])
+    const order = orderRows[0]
+    if (!order) {
+      return res.status(404).json({ message: 'Pedido no encontrado para este usuario.' })
+    }
+
+    const wompiTx = await fetchWompiTransaction(transactionId)
+    if (!wompiTx) {
+      return res.status(400).json({ message: 'No pudimos validar la transacción en Wompi.' })
+    }
+    if (wompiTx.reference !== orderCode) {
+      return res.status(400).json({ message: 'La referencia de pago no coincide con el pedido.' })
+    }
+
+    const result = await markOrderPaidFromWompi({
+      orderId: order.id,
+      orderCode,
+      userId: req.userId,
+      transaction: wompiTx
+    })
+
+    return res.json({
+      status: result.status,
+      transaction: wompiTx
+    })
+  } catch (error) {
+    return next(error)
   }
 })
 
@@ -1939,6 +2203,17 @@ app.post('/api/orders', requireAuth, async (req, res, next) => {
       'system',
       'Orden creada desde el checkout web.'
     ])
+
+    if (paymentMethodId === 'pasarela') {
+      await upsertOrderPayment({
+        orderId,
+        paymentMethod: 'pasarela',
+        status: 'pending',
+        reference: null,
+        amountCents: totalCents,
+        metadata: { provider: 'wompi', code: orderCode }
+      })
+    }
 
     if (cartId) {
       await connection.execute(SQL.markCartSubmitted, ['submitted', nowSql, nowSql, nowSql, cartId])
