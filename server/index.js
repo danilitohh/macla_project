@@ -581,12 +581,21 @@ const normalizeAnnouncementPayload = (body, fallbackId) => {
   }
 }
 
-const upsertOrderPayment = async ({ orderId, paymentMethod = 'pasarela', status, reference, amountCents, metadata }) => {
+const upsertOrderPayment = async ({
+  orderId,
+  paymentMethod = 'pasarela',
+  status,
+  reference,
+  amountCents,
+  metadata,
+  connection = null
+}) => {
   const nowSql = formatDateForSql(new Date())
   const processedAt = status === 'completed' || status === 'authorized' ? nowSql : null
   const metadataJson = metadata ? JSON.stringify(metadata) : null
+  const runner = connection ? connection.execute.bind(connection) : query
 
-  await query(
+  await runner(
     `
       INSERT INTO order_payments (
         order_id,
@@ -2207,15 +2216,16 @@ app.post('/api/orders', requireAuth, async (req, res, next) => {
     ])
 
     if (paymentMethodId === 'pasarela') {
-      await upsertOrderPayment({
-        orderId,
-        paymentMethod: 'pasarela',
-        status: 'pending',
-        reference: null,
-        amountCents: totalCents,
-        metadata: { provider: 'wompi', code: orderCode }
-      })
-    }
+    await upsertOrderPayment({
+      orderId,
+      paymentMethod: 'pasarela',
+      status: 'pending',
+      reference: null,
+      amountCents: totalCents,
+      metadata: { provider: 'wompi', code: orderCode },
+      connection
+    })
+  }
 
     if (cartId) {
       await connection.execute(SQL.markCartSubmitted, ['submitted', nowSql, nowSql, nowSql, cartId])
