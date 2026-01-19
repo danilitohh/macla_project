@@ -586,26 +586,28 @@ const upsertOrderPayment = async ({ orderId, paymentMethod = 'pasarela', status,
   const processedAt = status === 'completed' || status === 'authorized' ? nowSql : null
   const metadataJson = metadata ? JSON.stringify(metadata) : null
 
-  const [updateResult] = await query(SQL.updateOrderPaymentStatus, [
-    status,
-    reference || null,
-    processedAt,
-    metadataJson,
-    orderId,
-    paymentMethod
-  ])
-
-  if (updateResult.affectedRows === 0) {
-    await query(SQL.insertOrderPayment, [
-      orderId,
-      paymentMethod,
-      reference || null,
-      status,
-      amountCents,
-      processedAt,
-      metadataJson
-    ])
-  }
+  await query(
+    `
+      INSERT INTO order_payments (
+        order_id,
+        payment_method,
+        transaction_reference,
+        status,
+        amount_cents,
+        processed_at,
+        metadata_json
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        status = VALUES(status),
+        transaction_reference = COALESCE(VALUES(transaction_reference), transaction_reference),
+        processed_at = VALUES(processed_at),
+        metadata_json = VALUES(metadata_json),
+        amount_cents = VALUES(amount_cents),
+        updated_at = CURRENT_TIMESTAMP(3)
+    `,
+    [orderId, paymentMethod, reference || null, status, amountCents, processedAt, metadataJson]
+  )
 }
 
 const createInvoiceForOrder = async ({ order, items, taxRate = 0 }) => {

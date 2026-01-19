@@ -379,6 +379,7 @@ const createSchemaIfNeeded = async () => {
         updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         CONSTRAINT fk_order_payments_order FOREIGN KEY (order_id) REFERENCES orders(id)
           ON UPDATE CASCADE ON DELETE CASCADE,
+        UNIQUE KEY uniq_order_payment_method (order_id, payment_method),
         INDEX idx_order_payments_order (order_id),
         INDEX idx_order_payments_status (status)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -517,6 +518,12 @@ const ensureSchemaUpgrades = async (localPool) => {
   if (!(await constraintExists(localPool, 'orders', 'fk_orders_cart'))) {
     await localPool.execute(
       'ALTER TABLE orders ADD CONSTRAINT fk_orders_cart FOREIGN KEY (cart_id) REFERENCES shopping_carts(id) ON UPDATE CASCADE ON DELETE SET NULL'
+    )
+  }
+
+  if (!(await indexExists(localPool, 'order_payments', 'uniq_order_payment_method'))) {
+    await localPool.execute(
+      'ALTER TABLE order_payments ADD UNIQUE KEY uniq_order_payment_method (order_id, payment_method)'
     )
   }
 
