@@ -1275,18 +1275,23 @@ app.get('/api/announcements', async (_req, res, next) => {
 })
 
 app.get('/api/payments/wompi/config', requireAuth, async (req, res) => {
-  if (!WOMPI_PUBLIC_KEY) {
-    return res.status(400).json({ message: 'Wompi no está configurado en el servidor.' })
-  }
   const origin =
     (req.headers.referer && req.headers.referer.split('/').slice(0, 3).join('/')) ||
     `${req.protocol}://${req.get('host')}`
   const redirectUrl = WOMPI_REDIRECT_URL || `${origin}/pago/wompi`
+
+  const configured = Boolean(WOMPI_PUBLIC_KEY)
+  if (!configured) {
+    console.error('[wompi] WOMPI_PUBLIC_KEY no está configurada en el servidor.')
+  }
+
   return res.json({
-    publicKey: WOMPI_PUBLIC_KEY,
+    configured,
+    publicKey: configured ? WOMPI_PUBLIC_KEY : null,
     redirectUrl,
     environment: WOMPI_ENV,
-    currency: 'COP'
+    currency: 'COP',
+    message: configured ? null : 'Wompi no está configurado en el servidor.'
   })
 })
 

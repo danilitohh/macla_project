@@ -140,6 +140,9 @@ const CheckoutPage = () => {
       setWompiStatus('processing')
       setWompiError(null)
       const config = await getWompiConfig()
+      if (!config.publicKey) {
+        throw new Error(config.message || 'Wompi no está configurado en el servidor.')
+      }
       await loadScript('https://checkout.wompi.co/widget.js')
 
       const amountInCents = Math.max(0, Math.round(order.total)) * 100
