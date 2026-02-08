@@ -4,13 +4,14 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useCart } from '../hooks/useCart'
 import { formatCurrency } from '../utils/format'
 import { paymentMethods, shippingOptions } from '../data/config'
-import { submitOrder, validateDiscount } from '../services/orderService'
+import { submitOrder, validateDiscount, getUserOrders } from '../services/orderService'
 import { createAddress, getAddresses } from '../services/addressService'
 import type { OrderPayload, OrderCustomer, OrderSummary, OrderItemSummary, Address } from '../types'
 import { trackEvent } from '../utils/analytics'
 import { useAuth } from '../hooks/useAuth'
-import { getWompiConfig, verifyWompiTransaction } from '../services/paymentService'
+import { getWompiConfig, getWompiSignature, verifyWompiTransaction } from '../services/paymentService'
 import { loadScript } from '../utils/loadScript'
+import { clearWompiIntent, getWompiIntent, saveWompiIntent } from '../utils/wompiSession'
 
 declare global {
   interface Window {
@@ -52,6 +53,46 @@ const CheckoutPage = () => {
   const [validatingDiscount, setValidatingDiscount] = useState(false)
   const [wompiStatus, setWompiStatus] = useState<'idle' | 'ready' | 'processing' | 'paid' | 'error'>('idle')
   const [wompiError, setWompiError] = useState<string | null>(null)
+  const [wompiWebLoading, setWompiWebLoading] = useState(false)
+  const cachedWompiIntent = useMemo(() => getWompiIntent(), [])
+
+  useEffect(() => {
+    if (paymentId === 'pasarela' || submittedOrder?.paymentMethod?.id === 'pasarela') {
+      loadScript('https://checkout.wompi.co/widget.js').catch((err) =>
+        console.warn('[Wompi] No pudimos precargar el widget', err)
+      )
+    }
+  }, [paymentId, submittedOrder])
+
+  // Si recargamos la página después de crear el pedido, intenta restaurarlo desde el servidor
+  useEffect(() => {
+    if (submittedOrder || !isAuthenticated) return
+
+    let ignore = false
+    const restore = async () => {
+      try {
+        const orders = await getUserOrders()
+        const match =
+          cachedWompiIntent?.orderCode
+            ? orders.find((order) => order.code === cachedWompiIntent.orderCode) || orders[0]
+            : orders[0]
+        if (!ignore && match) {
+          setSubmittedOrder(match)
+          if (match.paymentMethod?.id) {
+            setPaymentId(match.paymentMethod.id)
+          }
+        }
+      } catch (error) {
+        console.error('[checkout] No pudimos restaurar el pedido tras recarga', error)
+      }
+    }
+
+    restore()
+
+    return () => {
+      ignore = true
+    }
+  }, [submittedOrder, isAuthenticated, cachedWompiIntent])
 
   useEffect(() => {
     if (!user) return
@@ -140,23 +181,79 @@ const CheckoutPage = () => {
       setWompiStatus('processing')
       setWompiError(null)
       const config = await getWompiConfig()
-      if (!config.publicKey) {
+      if (!config.configured || !config.publicKey) {
         throw new Error(config.message || 'Wompi no está configurado en el servidor.')
       }
       await loadScript('https://checkout.wompi.co/widget.js')
 
+      let redirectUrl = config.redirectUrl
+      try {
+        const url = new URL(config.redirectUrl)
+        url.searchParams.set('order', order.code)
+        redirectUrl = url.toString()
+      } catch (_err) {
+        const separator = config.redirectUrl.includes('?') ? '&' : '?'
+        redirectUrl = `${config.redirectUrl}${separator}order=${encodeURIComponent(order.code)}`
+      }
+
+      const phoneDigits = String(formValues.phone || '')
+        .replace(/[^\d]/g, '')
+        .slice(-12)
+      const defaultLocal = '3000000000'
+      let phoneNumberPrefix = '57'
+      let phoneNumber = phoneDigits || defaultLocal
+      if (phoneDigits.startsWith('57') && phoneDigits.length > 8) {
+        phoneNumberPrefix = '57'
+        phoneNumber = phoneDigits.slice(2)
+      } else if (phoneDigits.startsWith('52') && phoneDigits.length > 8) {
+        phoneNumberPrefix = '52'
+        phoneNumber = phoneDigits.slice(2)
+      } else if (phoneDigits.startsWith('1') && phoneDigits.length === 11) {
+        phoneNumberPrefix = '1'
+        phoneNumber = phoneDigits.slice(1)
+      }
+
+      let signature = null
+      let amountFromSignature = null
+      try {
+        const sig = await getWompiSignature({ orderCode: order.code })
+        signature = sig.signature
+        amountFromSignature = sig.amountInCents
+      } catch (err) {
+        console.warn('[Wompi] No pudimos generar la firma de integridad', err)
+      }
+
       const amountInCents = Math.max(0, Math.round(order.total)) * 100
-      const widget = new window.WidgetCheckout({
+      const baseWidgetConfig = {
         currency: order.currency,
-        amountInCents,
+        amountInCents: amountFromSignature ?? amountInCents,
         reference: order.code,
         publicKey: config.publicKey,
-        redirectUrl: config.redirectUrl,
+        redirectUrl,
         customerData: {
           email: formValues.email,
           fullName: formValues.name,
-          phoneNumber: formValues.phone
+          phoneNumber,
+          phoneNumberPrefix
         }
+      }
+
+      let widget: any
+      try {
+        widget = new window.WidgetCheckout({
+          ...baseWidgetConfig,
+          signature: signature ? { integrity: signature } : undefined
+        })
+      } catch (err) {
+        console.warn('[Wompi] Error con la firma, reintentando sin signature', err)
+        widget = new window.WidgetCheckout({ ...baseWidgetConfig })
+      }
+
+      saveWompiIntent({
+        orderCode: order.code,
+        total: order.total,
+        currency: order.currency,
+        createdAt: new Date().toISOString()
       })
 
       setWompiStatus('ready')
@@ -168,6 +265,7 @@ const CheckoutPage = () => {
             .then((res) => {
               setWompiStatus(res.status === 'paid' ? 'paid' : 'ready')
               if (res.status === 'paid') {
+                clearWompiIntent()
                 setSubmittedOrder((prev) => (prev ? { ...prev, status: 'paid' } : prev))
               }
             })
@@ -181,7 +279,51 @@ const CheckoutPage = () => {
     } catch (error) {
       console.error('[Wompi] Error iniciando checkout', error)
       setWompiStatus('error')
-      setWompiError('No pudimos abrir el checkout de Wompi. Intenta nuevamente.')
+      const fallback = error instanceof Error ? error.message : null
+      setWompiError(fallback || 'No pudimos abrir el checkout de Wompi. Intenta nuevamente.')
+    }
+  }
+
+  const startWompiWebCheckout = async (order: OrderSummary) => {
+    try {
+      setWompiWebLoading(true)
+      setWompiError(null)
+
+      const config = await getWompiConfig()
+      if (!config.configured || !config.publicKey) {
+        throw new Error(config.message || 'Wompi no está configurado en el servidor.')
+      }
+
+      let redirectUrl = config.redirectUrl
+      try {
+        const url = new URL(config.redirectUrl)
+        url.searchParams.set('order', order.code)
+        redirectUrl = url.toString()
+      } catch (_err) {
+        const separator = config.redirectUrl.includes('?') ? '&' : '?'
+        redirectUrl = `${config.redirectUrl}${separator}order=${encodeURIComponent(order.code)}`
+      }
+
+      const sig = await getWompiSignature({ orderCode: order.code })
+      const amountInCents = sig.amountInCents ?? Math.max(0, Math.round(order.total)) * 100
+      const params = new URLSearchParams()
+      params.set('public-key', config.publicKey)
+      params.set('currency', order.currency)
+      params.set('amount-in-cents', String(amountInCents))
+      params.set('reference', order.code)
+      params.set('signature:integrity', sig.signature)
+      params.set('redirect-url', redirectUrl)
+      if (formValues.email) params.set('customer-data:email', formValues.email)
+      if (formValues.name) params.set('customer-data:full-name', formValues.name)
+      if (formValues.phone) params.set('customer-data:phone-number', formValues.phone)
+
+      const checkoutUrl = `https://checkout.wompi.co/p/?${params.toString()}`
+      window.location.href = checkoutUrl
+    } catch (error) {
+      console.error('[Wompi] Error iniciando checkout web', error)
+      setWompiError(error instanceof Error ? error.message : 'No pudimos abrir el checkout web de Wompi.')
+    } finally {
+      setWompiWebLoading(false)
     }
   }
 
@@ -400,6 +542,16 @@ const CheckoutPage = () => {
                       disabled={wompiStatus === 'processing'}
                     >
                       {wompiStatus === 'processing' ? 'Abriendo Wompi…' : 'Pagar con Wompi'}
+                    </button>
+                  )}
+                  {wompiStatus !== 'paid' && (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => startWompiWebCheckout(submittedOrder)}
+                      disabled={wompiWebLoading}
+                    >
+                      {wompiWebLoading ? 'Abriendo checkout…' : 'Pagar con Wompi (Web)'}
                     </button>
                   )}
                   {wompiStatus === 'paid' && <p className="muted">Pago confirmado. ¡Gracias!</p>}
@@ -638,17 +790,28 @@ const CheckoutPage = () => {
             ) : (
               <>
                 <ul className="checkout-items">
-                  {summaryItems.map((item) => (
-                    <li key={item.product.id}>
-                      <div>
-                        <strong>{item.product.name}</strong>
-                        <p className="muted">
-                          {item.quantity} x {formatCurrency(item.unitPrice)}
-                        </p>
-                      </div>
-                      <span>{formatCurrency(item.lineTotal)}</span>
-                    </li>
-                  ))}
+                  {summaryItems.map((item) => {
+                    const coverImage =
+                      (Array.isArray((item.product as any).images) && (item.product as any).images[0]) ||
+                      (item.product as any).imageUrl ||
+                      (item.product as any).image ||
+                      '/plancha.png'
+
+                    return (
+                      <li key={item.product.id}>
+                        <div className="checkout-item__thumb">
+                          <img src={coverImage} alt={item.product.name} loading="lazy" />
+                        </div>
+                        <div>
+                          <strong>{item.product.name}</strong>
+                          <p className="muted">
+                            {item.quantity} x {formatCurrency(item.unitPrice)}
+                          </p>
+                        </div>
+                        <span>{formatCurrency(item.lineTotal)}</span>
+                      </li>
+                    )
+                  })}
                 </ul>
                 <div className="checkout-sidebar__totals">
                   <div>

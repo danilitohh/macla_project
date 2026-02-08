@@ -14,6 +14,7 @@ import PoliciesPage from './pages/PoliciesPage'
 import TermsPage from './pages/TermsPage'
 import NotFound from './pages/NotFound'
 import AccountPage from './pages/AccountPage'
+import WompiReturnPage from './pages/WompiReturnPage'
 import ProtectedRoute from './components/ProtectedRoute'
 import AdminRoute from './components/AdminRoute'
 import AdminPage from './pages/AdminPage'
@@ -39,6 +40,14 @@ function App() {
             }
           />
           <Route path="/cuenta" element={<AccountPage />} />
+          <Route
+            path="/pago/wompi"
+            element={
+              <ProtectedRoute loadingMessage="Validando tu pago…">
+                <WompiReturnPage />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/nosotros" element={<AboutPage />} />
           <Route path="/faq" element={<FAQPage />} />
           <Route path="/politicas" element={<PoliciesPage />} />

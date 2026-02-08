@@ -76,6 +76,9 @@ export interface OrderProductSnapshot extends Record<string, unknown> {
   name: string
   price: number
   currency: 'COP'
+  images?: string[]
+  image?: string | null
+  imageUrl?: string | null
 }
 
 export interface OrderItemSummary {

@@ -66,16 +66,29 @@ const parseJsonSafe = (value) => {
     return null
   }
 }
+const DEFAULT_PRODUCT_IMAGE = '/plancha.png'
+
 const normalizeProductSnapshot = (snapshot, { id, name, unitPrice }) => {
   const normalizedId = snapshot?.id || id || null
   const normalizedName = snapshot?.name || name || (normalizedId ? `Producto ${normalizedId}` : 'Producto')
   const normalizedPrice = safeInteger(snapshot?.price, unitPrice)
+  const normalizedImages = Array.isArray(snapshot?.images)
+    ? snapshot.images.filter(Boolean)
+    : snapshot?.image
+      ? [snapshot.image]
+      : snapshot?.imageUrl
+        ? [snapshot.imageUrl]
+        : []
+  const coverImage = normalizedImages[0] || DEFAULT_PRODUCT_IMAGE
   return {
     ...(snapshot && typeof snapshot === 'object' ? snapshot : {}),
     id: normalizedId || (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `product-${Date.now()}`),
     name: normalizedName,
     price: normalizedPrice,
-    currency: snapshot?.currency || 'COP'
+    currency: snapshot?.currency || 'COP',
+    images: normalizedImages.length > 0 ? normalizedImages : [coverImage],
+    image: coverImage,
+    imageUrl: coverImage
   }
 }
 const generateOrderCode = () => {
@@ -147,11 +160,25 @@ const TOKEN_CONFIG = {
   password_reset: Number(process.env.PASSWORD_RESET_TOKEN_EXPIRES_MINUTES || 15)
 }
 
-const WOMPI_PUBLIC_KEY = process.env.WOMPI_PUBLIC_KEY || ''
-const WOMPI_PRIVATE_KEY = process.env.WOMPI_PRIVATE_KEY || ''
-const WOMPI_REDIRECT_URL = process.env.WOMPI_REDIRECT_URL || ''
+// Limpia valores con posibles comentarios inline en .env ("URL # comentario")
+const cleanEnvValue = (value = '') => String(value).split('#')[0].trim()
+
+const WOMPI_PUBLIC_KEY = cleanEnvValue(process.env.WOMPI_PUBLIC_KEY || '')
+const WOMPI_PRIVATE_KEY = cleanEnvValue(process.env.WOMPI_PRIVATE_KEY || '')
+const WOMPI_REDIRECT_URL = cleanEnvValue(process.env.WOMPI_REDIRECT_URL || '')
 const WOMPI_ENV = process.env.WOMPI_ENV === 'production' ? 'production' : 'sandbox'
 const WOMPI_BASE_URL = WOMPI_ENV === 'production' ? 'https://production.wompi.co' : 'https://sandbox.wompi.co'
+const WOMPI_INTEGRITY_SECRET = process.env.WOMPI_INTEGRITY_SECRET || ''
+const wompiKeyEnvironment = () => {
+  if (WOMPI_PUBLIC_KEY.startsWith('pub_prod_') || WOMPI_PRIVATE_KEY.startsWith('prv_prod_')) {
+    return 'production'
+  }
+  if (WOMPI_PUBLIC_KEY.startsWith('pub_test_') || WOMPI_PRIVATE_KEY.startsWith('prv_test_')) {
+    return 'sandbox'
+  }
+  return 'unknown'
+}
+const WOMPI_KEY_ENV = wompiKeyEnvironment()
 
 const hashToken = (value) => crypto.createHash('sha256').update(value).digest('hex')
 const generateRawToken = () => crypto.randomBytes(32).toString('hex')
@@ -1280,9 +1307,22 @@ app.get('/api/payments/wompi/config', requireAuth, async (req, res) => {
     `${req.protocol}://${req.get('host')}`
   const redirectUrl = WOMPI_REDIRECT_URL || `${origin}/pago/wompi`
 
-  const configured = Boolean(WOMPI_PUBLIC_KEY)
+  let configured = Boolean(WOMPI_PUBLIC_KEY)
+  let message = null
+
   if (!configured) {
+    message = 'WOMPI_PUBLIC_KEY no está configurada en el servidor.'
     console.error('[wompi] WOMPI_PUBLIC_KEY no está configurada en el servidor.')
+  }
+
+  const keyEnvMismatch = WOMPI_KEY_ENV !== 'unknown' && WOMPI_KEY_ENV !== WOMPI_ENV
+  if (configured && keyEnvMismatch) {
+    configured = false
+    message =
+      WOMPI_ENV === 'sandbox'
+        ? 'Las llaves configuradas son de producción pero WOMPI_ENV=sandbox. Cambia a llaves sandbox o set WOMPI_ENV=production.'
+        : 'Las llaves configuradas son de sandbox pero WOMPI_ENV=production. Usa las llaves de producción para continuar.'
+    console.error('[wompi] clave y entorno no coinciden:', { WOMPI_ENV, WOMPI_KEY_ENV })
   }
 
   return res.json({
@@ -1291,7 +1331,9 @@ app.get('/api/payments/wompi/config', requireAuth, async (req, res) => {
     redirectUrl,
     environment: WOMPI_ENV,
     currency: 'COP',
-    message: configured ? null : 'Wompi no está configurado en el servidor.'
+    message: configured ? null : message || 'Wompi no está configurado en el servidor.',
+    integrityRequired: Boolean(WOMPI_INTEGRITY_SECRET),
+    signatureHelp: WOMPI_INTEGRITY_SECRET ? null : 'Configura WOMPI_INTEGRITY_SECRET para generar la firma de integridad.'
   })
 })
 
@@ -1330,6 +1372,30 @@ app.post('/api/payments/wompi/verify', requireAuth, async (req, res, next) => {
   } catch (error) {
     return next(error)
   }
+})
+
+app.post('/api/payments/wompi/signature', requireAuth, async (req, res) => {
+  const orderCode = sanitizeText(req.body.orderCode)
+  if (!orderCode) {
+    return res.status(400).json({ message: 'Falta el código de pedido.' })
+  }
+  if (!WOMPI_INTEGRITY_SECRET) {
+    return res.status(503).json({ message: 'El servidor no tiene WOMPI_INTEGRITY_SECRET configurado.' })
+  }
+
+  const [orderRows] = await query(SQL.orderByCode, [orderCode, req.userId])
+  const order = orderRows[0]
+  if (!order) {
+    return res.status(404).json({ message: 'Pedido no encontrado para generar la firma.' })
+  }
+
+  // Los montos en la base están en pesos (no en centavos). Para Wompi hay que convertir a centavos.
+  const amountInCents = Math.max(0, safeInteger(order.total_cents, 0) * 100)
+  const currency = order.currency || 'COP'
+  const signaturePayload = `${order.code}${amountInCents}${currency}${WOMPI_INTEGRITY_SECRET}`
+  const signature = crypto.createHash('sha256').update(signaturePayload).digest('hex')
+
+  return res.json({ signature, amountInCents, currency })
 })
 
 app.get('/api/products', async (_req, res, next) => {
