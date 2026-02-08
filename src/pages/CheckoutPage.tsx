@@ -53,7 +53,6 @@ const CheckoutPage = () => {
   const [validatingDiscount, setValidatingDiscount] = useState(false)
   const [wompiStatus, setWompiStatus] = useState<'idle' | 'ready' | 'processing' | 'paid' | 'error'>('idle')
   const [wompiError, setWompiError] = useState<string | null>(null)
-  const [wompiWebLoading, setWompiWebLoading] = useState(false)
   const cachedWompiIntent = useMemo(() => getWompiIntent(), [])
 
   useEffect(() => {
@@ -284,49 +283,6 @@ const CheckoutPage = () => {
     }
   }
 
-  const startWompiWebCheckout = async (order: OrderSummary) => {
-    try {
-      setWompiWebLoading(true)
-      setWompiError(null)
-
-      const config = await getWompiConfig()
-      if (!config.configured || !config.publicKey) {
-        throw new Error(config.message || 'Wompi no está configurado en el servidor.')
-      }
-
-      let redirectUrl = config.redirectUrl
-      try {
-        const url = new URL(config.redirectUrl)
-        url.searchParams.set('order', order.code)
-        redirectUrl = url.toString()
-      } catch (_err) {
-        const separator = config.redirectUrl.includes('?') ? '&' : '?'
-        redirectUrl = `${config.redirectUrl}${separator}order=${encodeURIComponent(order.code)}`
-      }
-
-      const sig = await getWompiSignature({ orderCode: order.code })
-      const amountInCents = sig.amountInCents ?? Math.max(0, Math.round(order.total)) * 100
-      const params = new URLSearchParams()
-      params.set('public-key', config.publicKey)
-      params.set('currency', order.currency)
-      params.set('amount-in-cents', String(amountInCents))
-      params.set('reference', order.code)
-      params.set('signature:integrity', sig.signature)
-      params.set('redirect-url', redirectUrl)
-      if (formValues.email) params.set('customer-data:email', formValues.email)
-      if (formValues.name) params.set('customer-data:full-name', formValues.name)
-      if (formValues.phone) params.set('customer-data:phone-number', formValues.phone)
-
-      const checkoutUrl = `https://checkout.wompi.co/p/?${params.toString()}`
-      window.location.href = checkoutUrl
-    } catch (error) {
-      console.error('[Wompi] Error iniciando checkout web', error)
-      setWompiError(error instanceof Error ? error.message : 'No pudimos abrir el checkout web de Wompi.')
-    } finally {
-      setWompiWebLoading(false)
-    }
-  }
-
   const handleAddressSelect = (address: Address) => {
     setSelectedAddressId(address.id)
     setFormValues((prev) => ({
@@ -542,16 +498,6 @@ const CheckoutPage = () => {
                       disabled={wompiStatus === 'processing'}
                     >
                       {wompiStatus === 'processing' ? 'Abriendo Wompi…' : 'Pagar con Wompi'}
-                    </button>
-                  )}
-                  {wompiStatus !== 'paid' && (
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() => startWompiWebCheckout(submittedOrder)}
-                      disabled={wompiWebLoading}
-                    >
-                      {wompiWebLoading ? 'Abriendo checkout…' : 'Pagar con Wompi (Web)'}
                     </button>
                   )}
                   {wompiStatus === 'paid' && <p className="muted">Pago confirmado. ¡Gracias!</p>}
