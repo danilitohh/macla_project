@@ -54,6 +54,24 @@ const columnExists = async (poolRef, table, column) => {
   return rows.length > 0
 }
 
+const ensureColumnType = async (poolRef, { table, column, type }) => {
+  const [rows] = await poolRef.query(
+    `
+      SELECT DATA_TYPE
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = ?
+        AND TABLE_NAME = ?
+        AND COLUMN_NAME = ?
+      LIMIT 1
+    `,
+    [DB_NAME, table, column]
+  )
+  const current = rows[0]?.DATA_TYPE ? String(rows[0].DATA_TYPE).toLowerCase() : null
+  if (current && current !== type.toLowerCase()) {
+    await poolRef.query(`ALTER TABLE \`${table}\` MODIFY \`${column}\` ${type} NULL`)
+  }
+}
+
 const indexExists = async (poolRef, table, indexName) => {
   const [rows] = await poolRef.query(
     `
@@ -200,7 +218,7 @@ const createSchemaIfNeeded = async () => {
         badge VARCHAR(128) NULL,
         cta_label VARCHAR(128) NULL,
         cta_url TEXT NULL,
-        image_url TEXT NULL,
+        image_url MEDIUMTEXT NULL,
         sort_order INT UNSIGNED NOT NULL DEFAULT 0,
         is_active TINYINT(1) NOT NULL DEFAULT 1,
         created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -554,6 +572,9 @@ const ensureSchemaUpgrades = async (localPool) => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `
   )
+
+  // Asegura que la columna de imagen de anuncios soporte data URLs grandes
+  await ensureColumnType(localPool, { table: 'announcements', column: 'image_url', type: 'MEDIUMTEXT' })
 }
 
 const seedInitialData = async () => {
