@@ -9,6 +9,9 @@ require("dotenv").config(
 
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
+const compression = require("compression");
+const rateLimit = require("express-rate-limit");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
@@ -20,6 +23,14 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || "macla-dev-secret";
 const TOKEN_EXPIRATION = process.env.JWT_EXPIRATION || "7d";
+const NODE_ENV = process.env.NODE_ENV || "development";
+
+if (
+  NODE_ENV === "production" &&
+  (!process.env.JWT_SECRET || process.env.JWT_SECRET === "macla-dev-secret")
+) {
+  throw new Error("Falta JWT_SECRET seguro en producción");
+}
 const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://localhost:4000",
@@ -33,6 +44,20 @@ const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",").map((origin) => origin.trim())
   : DEFAULT_ALLOWED_ORIGINS;
 
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const reviewLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -45,10 +70,19 @@ app.use(
     credentials: true,
   }),
 );
-// Increase body size limits to allow product images/videos en base64
-app.use(express.json({ limit: "75mb" }));
-app.use(express.urlencoded({ extended: true, limit: "75mb" }));
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  }),
+);
+app.use(compression());
+// Ajuste razonable de tamaño: datos pesados deben ir a storage, no al body
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({ extended: true, limit: "15mb" }));
+app.use("/api", apiLimiter);
 app.use("/uploads", express.static(PUBLIC_UPLOAD_DIR));
+app.use("/api/products/:id/reviews", reviewLimiter);
 
 const normalizeEmail = (email = "") => String(email).trim().toLowerCase();
 const sanitizeName = (name = "") => String(name).trim();
@@ -120,6 +154,18 @@ const dataUrlToFilePath = async (dataUrl, { prefix = "media" } = {}) => {
   if (!match) return null;
   const mime = match[1];
   const base64 = match[2];
+  const allowedMimes = [
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/gif",
+    "video/mp4",
+    "video/webm",
+  ];
+  if (!allowedMimes.includes(mime)) {
+    return null;
+  }
   const ext = (() => {
     const [, subtype] = (mime || "").split("/");
     if (!subtype) return "bin";
@@ -404,10 +450,23 @@ const toProductDto = (row, extras) => {
   };
 };
 
-const fetchProductList = async ({ includeInactive = false } = {}) => {
-  const [rows] = await query(
-    includeInactive ? SQL.selectAllProducts : SQL.selectActiveProducts,
-  );
+const fetchProductList = async ({
+  includeInactive = false,
+  page = null,
+  pageSize = null,
+} = {}) => {
+  const limit =
+    page && pageSize
+      ? Math.max(1, Math.min(1000, Number(pageSize)))
+      : null;
+  const offset =
+    page && limit ? Math.max(0, (Number(page) - 1) * limit) : null;
+  const baseSql = includeInactive
+    ? SQL.selectAllProducts
+    : SQL.selectActiveProducts;
+  const sql = limit ? `${baseSql} LIMIT ? OFFSET ?` : baseSql;
+  const params = limit ? [limit, offset] : [];
+  const [rows] = await query(sql, params);
   if (!rows.length) {
     return [];
   }
@@ -434,14 +493,20 @@ const fetchProductById = async (
 
 const fetchProductReviews = async (
   productId,
-  { includeInactive = false } = {},
+  { includeInactive = false, page = null, pageSize = null } = {},
 ) => {
-  const [rows] = await query(
-    includeInactive
-      ? SQL.selectAllReviewsByProduct
-      : SQL.selectReviewsByProduct,
-    [productId],
-  );
+  const limit =
+    page && pageSize
+      ? Math.max(1, Math.min(100, Number(pageSize)))
+      : null;
+  const offset =
+    page && limit ? Math.max(0, (Number(page) - 1) * limit) : null;
+  const baseSql = includeInactive
+    ? SQL.selectAllReviewsByProduct
+    : SQL.selectReviewsByProduct;
+  const sql = limit ? `${baseSql} LIMIT ? OFFSET ?` : baseSql;
+  const params = limit ? [productId, limit, offset] : [productId];
+  const [rows] = await query(sql, params);
   return rows.map(toReviewDto);
 };
 
@@ -720,6 +785,15 @@ const sanitizeArrayOfMedia = (value) =>
         .filter((item) => !!item)
         .slice(0, 5)
     : [];
+const parsePagination = (req, maxPageSize = 100) => {
+  const page = Number(req.query.page || 0);
+  const pageSize = Number(req.query.pageSize || 0);
+  if (page > 0) {
+    const size = Math.max(1, Math.min(maxPageSize, pageSize || maxPageSize));
+    return { page, pageSize: size };
+  }
+  return { page: null, pageSize: null };
+};
 
 const sanitizeSpecs = (value) => {
   if (!value || typeof value !== "object") {
@@ -1717,7 +1791,12 @@ app.post("/api/payments/wompi/signature", requireAuth, async (req, res) => {
 
 app.get("/api/products", async (_req, res, next) => {
   try {
-    const products = await fetchProductList({ includeInactive: false });
+    const { page, pageSize } = parsePagination(_req, 200);
+    const products = await fetchProductList({
+      includeInactive: false,
+      page,
+      pageSize,
+    });
     res.json({ products });
   } catch (error) {
     next(error);
@@ -1748,8 +1827,11 @@ app.get("/api/products/:id/reviews", async (req, res, next) => {
     if (!productId) {
       return res.status(400).json({ message: "Producto inválido." });
     }
+    const { page, pageSize } = parsePagination(req, 50);
     const reviews = await fetchProductReviews(productId, {
       includeInactive: false,
+      page,
+      pageSize,
     });
     return res.json({ reviews });
   } catch (error) {
@@ -2982,7 +3064,12 @@ app.get(
   requireAdmin,
   async (_req, res, next) => {
     try {
-      const products = await fetchProductList({ includeInactive: true });
+      const { page, pageSize } = parsePagination(_req, 500);
+      const products = await fetchProductList({
+        includeInactive: true,
+        page,
+        pageSize,
+      });
       res.json({ products });
     } catch (error) {
       next(error);
@@ -3078,8 +3165,11 @@ app.get(
       const productId = String(req.params.id || "").trim();
       if (!productId)
         return res.status(400).json({ message: "Producto inválido." });
+      const { page, pageSize } = parsePagination(req, 200);
       const reviews = await fetchProductReviews(productId, {
         includeInactive: true,
+        page,
+        pageSize,
       });
       res.json({ reviews });
     } catch (error) {
