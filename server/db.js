@@ -9,7 +9,8 @@ const {
   DB_USER = 'root',
   DB_PASSWORD = '',
   DB_NAME = 'macla_store',
-  DB_CONNECTION_LIMIT = '10'
+  DB_CONNECTION_LIMIT = '10',
+  SEED_ON_START = 'false'
 } = process.env
 const { ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME = 'Administrador MACLA' } = process.env
 
@@ -152,7 +153,7 @@ const createSchemaIfNeeded = async () => {
       CREATE TABLE IF NOT EXISTS product_images (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         product_id VARCHAR(64) NOT NULL,
-        image_url TEXT NOT NULL,
+        image_url LONGTEXT NOT NULL,
         sort_order INT UNSIGNED NOT NULL DEFAULT 0,
         created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         CONSTRAINT fk_product_images_product FOREIGN KEY (product_id) REFERENCES products(id)
@@ -208,6 +209,24 @@ const createSchemaIfNeeded = async () => {
           ON UPDATE CASCADE ON DELETE CASCADE,
         INDEX idx_product_tags_product (product_id),
         INDEX idx_product_tags_tag (tag)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS product_reviews (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        product_id VARCHAR(64) NOT NULL,
+        author VARCHAR(255) NOT NULL,
+        rating TINYINT UNSIGNED NOT NULL DEFAULT 5,
+        comment TEXT NOT NULL,
+        image_url LONGTEXT NULL,
+        sort_order INT UNSIGNED NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT fk_product_reviews_product FOREIGN KEY (product_id) REFERENCES products(id)
+          ON UPDATE CASCADE ON DELETE CASCADE,
+        INDEX idx_product_reviews_product (product_id),
+        INDEX idx_product_reviews_sort (product_id, sort_order)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `,
     `
@@ -468,7 +487,9 @@ const createSchemaIfNeeded = async () => {
   }
 
   await ensureSchemaUpgrades(localPool)
-  await seedInitialData()
+  if (SEED_ON_START === 'true') {
+    await seedInitialData()
+  }
 }
 
 const ensureSchemaUpgrades = async (localPool) => {
@@ -575,6 +596,8 @@ const ensureSchemaUpgrades = async (localPool) => {
 
   // Asegura que la columna de imagen de anuncios soporte data URLs grandes
   await ensureColumnType(localPool, { table: 'announcements', column: 'image_url', type: 'MEDIUMTEXT' })
+  // Y también la de imágenes de productos para permitir data URLs grandes
+  await ensureColumnType(localPool, { table: 'product_images', column: 'image_url', type: 'LONGTEXT' })
 }
 
 const seedInitialData = async () => {
@@ -585,7 +608,6 @@ const seedInitialData = async () => {
     await connection.beginTransaction()
 
     for (const category of categories) {
-      // eslint-disable-next-line no-await-in-loop
       await connection.execute(
         `
           INSERT INTO categories (id, label, description, is_active)
@@ -601,7 +623,6 @@ const seedInitialData = async () => {
     }
 
     for (const option of shippingOptions) {
-      // eslint-disable-next-line no-await-in-loop
       await connection.execute(
         `
           INSERT INTO shipping_options (id, label, description, price_cents, is_active)
@@ -616,12 +637,8 @@ const seedInitialData = async () => {
         [option.id, option.label, option.description, option.price]
       )
 
-      // eslint-disable-next-line no-await-in-loop
       await connection.execute('DELETE FROM shipping_regions WHERE shipping_option_id = ?', [option.id])
-
-      // eslint-disable-next-line no-await-in-loop
       for (const [index, region] of option.regions.entries()) {
-        // eslint-disable-next-line no-await-in-loop
         await connection.execute(
           `
             INSERT INTO shipping_regions (shipping_option_id, region, sort_order)
@@ -633,7 +650,6 @@ const seedInitialData = async () => {
     }
 
     for (const method of paymentMethods) {
-      // eslint-disable-next-line no-await-in-loop
       await connection.execute(
         `
           INSERT INTO payment_methods (id, label, description, is_active)
@@ -648,120 +664,113 @@ const seedInitialData = async () => {
       )
     }
 
-    for (const product of products) {
-      const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
+    const [countRows] = await connection.query('SELECT COUNT(*) AS total FROM products')
+    const hasProducts = Number(countRows[0]?.total || 0) > 0
 
-      // eslint-disable-next-line no-await-in-loop
-      await connection.execute(
-        `
-          INSERT INTO products (
-            id,
-            category_id,
-            name,
-            short_description,
-            description,
-            price_cents,
-            currency,
-            stock,
-            is_active,
-            created_at,
-            updated_at
+    if (!hasProducts) {
+      for (const product of products) {
+        const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
+
+        await connection.execute(
+          `
+            INSERT INTO products (
+              id,
+              category_id,
+              name,
+              short_description,
+              description,
+              price_cents,
+              currency,
+              stock,
+              is_active,
+              created_at,
+              updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              category_id = VALUES(category_id),
+              name = VALUES(name),
+              short_description = VALUES(short_description),
+              description = VALUES(description),
+              price_cents = VALUES(price_cents),
+              currency = VALUES(currency),
+              stock = VALUES(stock),
+              is_active = VALUES(is_active),
+              updated_at = CURRENT_TIMESTAMP(3)
+          `,
+          [
+            product.id,
+            product.categoryId,
+            product.name,
+            product.shortDescription,
+            product.description,
+            product.price,
+            product.currency,
+            product.stock,
+            now,
+            now
+          ]
+        )
+
+        await connection.execute('DELETE FROM product_images WHERE product_id = ?', [product.id])
+        for (const [index, imageUrl] of product.images.entries()) {
+          await connection.execute(
+            `
+              INSERT INTO product_images (product_id, image_url, sort_order)
+              VALUES (?, ?, ?)
+            `,
+            [product.id, imageUrl, index]
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-          ON DUPLICATE KEY UPDATE
-            category_id = VALUES(category_id),
-            name = VALUES(name),
-            short_description = VALUES(short_description),
-            description = VALUES(description),
-            price_cents = VALUES(price_cents),
-            currency = VALUES(currency),
-            stock = VALUES(stock),
-            is_active = VALUES(is_active),
-            updated_at = CURRENT_TIMESTAMP(3)
-        `,
-        [
-          product.id,
-          product.categoryId,
-          product.name,
-          product.shortDescription,
-          product.description,
-          product.price,
-          product.currency,
-          product.stock,
-          now,
-          now
-        ]
-      )
+        }
 
-      // eslint-disable-next-line no-await-in-loop
-      await connection.execute('DELETE FROM product_images WHERE product_id = ?', [product.id])
-      for (const [index, imageUrl] of product.images.entries()) {
-        // eslint-disable-next-line no-await-in-loop
-        await connection.execute(
-          `
-            INSERT INTO product_images (product_id, image_url, sort_order)
-            VALUES (?, ?, ?)
-          `,
-          [product.id, imageUrl, index]
-        )
-      }
+        await connection.execute('DELETE FROM product_features WHERE product_id = ?', [product.id])
+        for (const [index, feature] of product.features.entries()) {
+          await connection.execute(
+            `
+              INSERT INTO product_features (product_id, feature_text, sort_order)
+              VALUES (?, ?, ?)
+            `,
+            [product.id, feature, index]
+          )
+        }
 
-      // eslint-disable-next-line no-await-in-loop
-      await connection.execute('DELETE FROM product_features WHERE product_id = ?', [product.id])
-      for (const [index, feature] of product.features.entries()) {
-        // eslint-disable-next-line no-await-in-loop
-        await connection.execute(
-          `
-            INSERT INTO product_features (product_id, feature_text, sort_order)
-            VALUES (?, ?, ?)
-          `,
-          [product.id, feature, index]
-        )
-      }
+        await connection.execute('DELETE FROM product_highlights WHERE product_id = ?', [product.id])
+        for (const [index, highlight] of product.highlights.entries()) {
+          await connection.execute(
+            `
+              INSERT INTO product_highlights (product_id, highlight_text, sort_order)
+              VALUES (?, ?, ?)
+            `,
+            [product.id, highlight, index]
+          )
+        }
 
-      // eslint-disable-next-line no-await-in-loop
-      await connection.execute('DELETE FROM product_highlights WHERE product_id = ?', [product.id])
-      for (const [index, highlight] of product.highlights.entries()) {
-        // eslint-disable-next-line no-await-in-loop
-        await connection.execute(
-          `
-            INSERT INTO product_highlights (product_id, highlight_text, sort_order)
-            VALUES (?, ?, ?)
-          `,
-          [product.id, highlight, index]
-        )
-      }
+        await connection.execute('DELETE FROM product_specs WHERE product_id = ?', [product.id])
+        const specEntries = Object.entries(product.specs || {})
+        for (const [index, [key, value]] of specEntries.entries()) {
+          await connection.execute(
+            `
+              INSERT INTO product_specs (product_id, spec_key, spec_value, sort_order)
+              VALUES (?, ?, ?, ?)
+            `,
+            [product.id, key, String(value), index]
+          )
+        }
 
-      // eslint-disable-next-line no-await-in-loop
-      await connection.execute('DELETE FROM product_specs WHERE product_id = ?', [product.id])
-      const specEntries = Object.entries(product.specs || {})
-      for (const [index, [key, value]] of specEntries.entries()) {
-        // eslint-disable-next-line no-await-in-loop
-        await connection.execute(
-          `
-            INSERT INTO product_specs (product_id, spec_key, spec_value, sort_order)
-            VALUES (?, ?, ?, ?)
-          `,
-          [product.id, key, String(value), index]
-        )
-      }
-
-      // eslint-disable-next-line no-await-in-loop
-      await connection.execute('DELETE FROM product_tags WHERE product_id = ?', [product.id])
-      for (const tag of product.tags || []) {
-        // eslint-disable-next-line no-await-in-loop
-        await connection.execute(
-          `
-            INSERT INTO product_tags (product_id, tag)
-            VALUES (?, ?)
-          `,
-          [product.id, tag]
-        )
+        await connection.execute('DELETE FROM product_tags WHERE product_id = ?', [product.id])
+        for (const tag of product.tags || []) {
+          await connection.execute(
+            `
+              INSERT INTO product_tags (product_id, tag)
+              VALUES (?, ?)
+            `,
+            [product.id, tag]
+          )
+        }
       }
     }
 
     for (const announcement of announcements) {
-      // eslint-disable-next-line no-await-in-loop
       await connection.execute(
         `
           INSERT INTO announcements (

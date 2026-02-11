@@ -9,7 +9,8 @@ import { getAnnouncements, getProducts } from '../services/catalogService'
 
 const Home = () => {
   const [showHighlight, setShowHighlight] = useState(false)
-  const [highlight, setHighlight] = useState<Announcement | null>(null)
+  const [announcements, setAnnouncements] = useState<Announcement[]>([])
+  const [highlightIndex, setHighlightIndex] = useState(0)
   const [catalog, setCatalog] = useState<Product[]>(fallbackProducts)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -20,16 +21,16 @@ const Home = () => {
     const loadData = async () => {
       try {
         setError(null)
-        const [remoteProducts, announcements] = await Promise.all([getProducts(), getAnnouncements()])
+        const [remoteProducts, remoteAnnouncements] = await Promise.all([getProducts(), getAnnouncements()])
         if (!isMounted) return
         setCatalog(remoteProducts.length > 0 ? remoteProducts : fallbackProducts)
-        setHighlight(announcements.find((item) => item.isActive) || announcements[0] || null)
-        setShowHighlight((announcements.find((item) => item.isActive) || announcements[0]) !== undefined)
+        setAnnouncements(remoteAnnouncements)
+        setHighlightIndex(0)
       } catch (err) {
         console.error('[Home] Error loading catalog/announcements', err)
         if (!isMounted) return
         setCatalog(fallbackProducts)
-        setHighlight(null)
+        setAnnouncements([])
         setError('No pudimos cargar las novedades. Mostramos el catálogo base.')
         setShowHighlight(false)
       } finally {
@@ -46,23 +47,79 @@ const Home = () => {
     }
   }, [])
 
+  const prioritizedAnnouncements = useMemo(() => {
+    const sorted = [...announcements].sort(
+      (a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title)
+    )
+    const active = sorted.filter((item) => item.isActive)
+    return active.length > 0 ? active : sorted
+  }, [announcements])
+
+  const highlight = prioritizedAnnouncements[highlightIndex] || null
+  const hasMultipleHighlights = prioritizedAnnouncements.length > 1
+
   const featuredProducts = useMemo(() => catalog.slice(0, 4), [catalog])
 
   useEffect(() => {
-    if (highlight) {
+    if (prioritizedAnnouncements.length === 0) {
+      setShowHighlight(false)
+      return
+    }
+    setHighlightIndex((prev) => Math.min(prev, prioritizedAnnouncements.length - 1))
+  }, [prioritizedAnnouncements.length])
+
+  useEffect(() => {
+    if (prioritizedAnnouncements.length > 0) {
       setShowHighlight(true)
     }
-  }, [highlight])
+  }, [prioritizedAnnouncements.length])
+
+  const handleNextAnnouncement = () => {
+    if (prioritizedAnnouncements.length <= 1) return
+    setHighlightIndex((prev) => (prev + 1) % prioritizedAnnouncements.length)
+  }
+
+  const handlePrevAnnouncement = () => {
+    if (prioritizedAnnouncements.length <= 1) return
+    setHighlightIndex((prev) => (prev - 1 + prioritizedAnnouncements.length) % prioritizedAnnouncements.length)
+  }
 
   return (
     <div className="page">
       {showHighlight && highlight && (
         <div className="modal" role="dialog" aria-modal="true" aria-label="Producto destacado">
           <div className="modal__content">
-            {highlight.badge && <span className="modal__sticker">{highlight.badge}</span>}
             <button type="button" className="modal__close" onClick={() => setShowHighlight(false)} aria-label="Cerrar anuncio">
               ×
             </button>
+            <div className="modal__nav" aria-label="Cambiar anuncio destacado">
+              <div className="modal__nav-left">
+                {highlight.badge && <span className="modal__sticker">{highlight.badge}</span>}
+                {hasMultipleHighlights && (
+                  <span className="modal__nav-count">Anuncio {highlightIndex + 1} de {prioritizedAnnouncements.length}</span>
+                )}
+              </div>
+              {hasMultipleHighlights && (
+                <div className="modal__nav-buttons">
+                  <button
+                    type="button"
+                    className="modal__nav-btn"
+                    onClick={handlePrevAnnouncement}
+                    aria-label="Anuncio anterior"
+                  >
+                    ← Anterior
+                  </button>
+                  <button
+                    type="button"
+                    className="modal__nav-btn"
+                    onClick={handleNextAnnouncement}
+                    aria-label="Siguiente anuncio"
+                  >
+                    Ver siguiente →
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="modal__body">
               <div className="modal__image">
                 <img src={highlight.imageUrl || '/hero-macla.png'} alt={highlight.title} />

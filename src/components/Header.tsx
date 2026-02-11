@@ -22,8 +22,8 @@ const Header = () => {
     <header className="header">
       <div className="container header__inner">
         <Link to="/" className="header__logo" aria-label="MACLA Distribuciones">
-          <img src="/logo.png" alt="MACLA Distribuciones" />
-          <span className="sr-only">MACLA Distribuciones</span>
+          <span className="logo__title">MACLA</span>
+          <span className="logo__subtitle">IMPORTACIONES</span>
         </Link>
         <nav className={`header__nav ${isMobileMenuOpen ? 'is-open' : ''}`}>
           {fullNavItems.map((item) => (

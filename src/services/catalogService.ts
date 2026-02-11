@@ -1,5 +1,5 @@
 import { request } from './apiClient'
-import type { Announcement, Product } from '../types'
+import type { Announcement, Product, Review } from '../types'
 
 export const getProducts = async (): Promise<Product[]> => {
   const result = await request<{ products: Product[] }>('/products', { method: 'GET' })
@@ -9,6 +9,11 @@ export const getProducts = async (): Promise<Product[]> => {
 export const getProductById = async (id: string): Promise<Product | null> => {
   const result = await request<{ product: Product }>(`/products/${id}`, { method: 'GET' })
   return result.product ?? null
+}
+
+export const getProductReviews = async (productId: string): Promise<Review[]> => {
+  const result = await request<{ reviews: Review[] }>(`/products/${productId}/reviews`, { method: 'GET' })
+  return Array.isArray(result.reviews) ? result.reviews : []
 }
 
 export const getAnnouncements = async (): Promise<Announcement[]> => {
@@ -44,6 +49,26 @@ export const deleteAdminProduct = async (id: string): Promise<void> => {
 export const getAdminAnnouncements = async (): Promise<Announcement[]> => {
   const result = await request<{ announcements: Announcement[] }>('/admin/announcements', { method: 'GET' })
   return Array.isArray(result.announcements) ? result.announcements : []
+}
+
+export const getAdminReviews = async (productId: string): Promise<Review[]> => {
+  const result = await request<{ reviews: Review[] }>(`/admin/products/${productId}/reviews`, { method: 'GET' })
+  return Array.isArray(result.reviews) ? result.reviews : []
+}
+
+export const createAdminReview = async (
+  productId: string,
+  payload: Partial<Review>
+): Promise<Review> => {
+  const result = await request<{ review: Review }>(`/admin/products/${productId}/reviews`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+  return result.review
+}
+
+export const deleteAdminReview = async (productId: string, reviewId: number): Promise<void> => {
+  await request<void>(`/admin/products/${productId}/reviews/${reviewId}`, { method: 'DELETE' })
 }
 
 export const createAdminAnnouncement = async (payload: Partial<Announcement>): Promise<Announcement> => {

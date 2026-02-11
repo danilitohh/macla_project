@@ -130,3 +130,14 @@ export interface Announcement {
   sortOrder: number
   isActive: boolean
 }
+
+export interface Review {
+  id: number
+  productId: string
+  author: string
+  rating: number
+  comment: string
+  imageUrl?: string | null
+  isActive: boolean
+  sortOrder: number
+}

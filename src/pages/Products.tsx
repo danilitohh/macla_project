@@ -54,7 +54,7 @@ const Products = () => {
       )
     }
     return filtered
-  }, [selectedCategory, searchTerm])
+  }, [catalog, selectedCategory, searchTerm])
 
   const handleCategoryChange = (categoryId: string) => {
     setSelectedCategory(categoryId)

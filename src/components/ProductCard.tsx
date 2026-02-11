@@ -9,7 +9,9 @@ interface Props {
 
 const ProductCard = ({ product }: Props) => {
   const { addItem } = useCart()
-  const coverImage = product.images[0] || '/hero-macla.png'
+  const isVideoSrc = (src: string) => /^data:video\//i.test(src) || /\.(mp4|webm|ogg)(\?.*)?$/i.test(src)
+  const coverImage =
+    product.images.find((src) => !isVideoSrc(src)) || product.images[0] || '/hero-macla.png'
 
   return (
     <article className="product-card">
@@ -22,6 +24,11 @@ const ProductCard = ({ product }: Props) => {
         </Link>
         <p className="product-card__description">{product.shortDescription}</p>
         <p className="product-card__price">{formatCurrency(product.price, product.currency)}</p>
+        <div className="pill-list pill-list--compact">
+          <span className="pill">Garantía 1 mes</span>
+          <span className="pill">Envío nacional</span>
+          <span className="pill">Pago seguro</span>
+        </div>
         <button type="button" className="btn" onClick={() => addItem(product, 1)}>
           Añadir al carrito
         </button>

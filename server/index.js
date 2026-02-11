@@ -1,5 +1,6 @@
 const path = require('path')
 const fs = require('fs')
+const { mkdir, writeFile } = require('fs').promises
 
 const envPath = path.join(__dirname, '.env')
 require('dotenv').config(fs.existsSync(envPath) ? { path: envPath } : undefined)
@@ -24,6 +25,7 @@ const DEFAULT_ALLOWED_ORIGINS = [
 ]
 const CLIENT_DIST_PATH = path.join(__dirname, '..', 'dist')
 const CLIENT_INDEX_PATH = path.join(CLIENT_DIST_PATH, 'index.html')
+const PUBLIC_UPLOAD_DIR = path.join(__dirname, '..', 'public', 'uploads')
 
 const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',').map((origin) => origin.trim())
@@ -41,7 +43,10 @@ app.use(
     credentials: true
   })
 )
-app.use(express.json({ limit: '2mb' }))
+// Increase body size limits to allow product images/videos en base64
+app.use(express.json({ limit: '75mb' }))
+app.use(express.urlencoded({ extended: true, limit: '75mb' }))
+app.use('/uploads', express.static(PUBLIC_UPLOAD_DIR))
 
 const normalizeEmail = (email = '') => String(email).trim().toLowerCase()
 const sanitizeName = (name = '') => String(name).trim()
@@ -67,6 +72,43 @@ const parseJsonSafe = (value) => {
   }
 }
 const DEFAULT_PRODUCT_IMAGE = '/plancha.png'
+const toReviewDto = (row) => ({
+  id: row.id,
+  productId: row.product_id,
+  author: row.author,
+  rating: safeInteger(row.rating, 5),
+  comment: row.comment,
+  imageUrl: row.image_url || null,
+  sortOrder: safeInteger(row.sort_order, 0),
+  isActive: Boolean(row.is_active)
+})
+
+const ensureUploadsDir = async () => {
+  try {
+    await mkdir(PUBLIC_UPLOAD_DIR, { recursive: true })
+  } catch (_err) {
+    // ignore
+  }
+}
+
+const dataUrlToFilePath = async (dataUrl, { prefix = 'media' } = {}) => {
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) return null
+  const match = /^data:([^;]+);base64,(.+)$/i.exec(dataUrl)
+  if (!match) return null
+  const mime = match[1]
+  const base64 = match[2]
+  const ext = (() => {
+    const [, subtype] = (mime || '').split('/')
+    if (!subtype) return 'bin'
+    if (subtype.includes('+')) return subtype.split('+')[0]
+    return subtype
+  })()
+  const filename = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+  const buffer = Buffer.from(base64, 'base64')
+  await ensureUploadsDir()
+  await writeFile(path.join(PUBLIC_UPLOAD_DIR, filename), buffer)
+  return `/uploads/${filename}`
+}
 
 const normalizeProductSnapshot = (snapshot, { id, name, unitPrice }) => {
   const normalizedId = snapshot?.id || id || null
@@ -316,6 +358,14 @@ const fetchProductById = async (productId, { includeInactive = false } = {}) => 
   return product || null
 }
 
+const fetchProductReviews = async (productId, { includeInactive = false } = {}) => {
+  const [rows] = await query(
+    includeInactive ? SQL.selectAllReviewsByProduct : SQL.selectReviewsByProduct,
+    [productId]
+  )
+  return rows.map(toReviewDto)
+}
+
 const saveProductWithExtras = async (payload) => {
   const {
     id,
@@ -333,6 +383,25 @@ const saveProductWithExtras = async (payload) => {
     specs = {},
     isActive = true
   } = payload
+
+  // Persist large data URLs to disk to evitar max_allowed_packet errors
+  const processedImages = []
+  for (let i = 0; i < images.length; i += 1) {
+    const url = images[i]
+    if (typeof url === 'string' && url.startsWith('data:')) {
+      try {
+        const stored = await dataUrlToFilePath(url, { prefix: `product-${id || 'item'}-${i}` })
+        if (stored) {
+          processedImages.push(stored)
+          continue
+        }
+      } catch (err) {
+        console.error('[saveProductWithExtras] error saving data URL to file', err)
+        // fallback to original url
+      }
+    }
+    processedImages.push(url)
+  }
 
   const connection = await getPool().getConnection()
   try {
@@ -382,7 +451,7 @@ const saveProductWithExtras = async (payload) => {
     )
 
     await connection.execute('DELETE FROM product_images WHERE product_id = ?', [id])
-    for (const [index, image] of images.entries()) {
+    for (const [index, image] of processedImages.entries()) {
       // eslint-disable-next-line no-await-in-loop
       await connection.execute(
         `
@@ -1115,6 +1184,17 @@ const SQL = {
     WHERE id = ?
     LIMIT 1
   `,
+  selectReviewsByProduct: `
+    SELECT * FROM product_reviews
+    WHERE product_id = ?
+      AND is_active = 1
+    ORDER BY sort_order ASC, created_at DESC
+  `,
+  selectAllReviewsByProduct: `
+    SELECT * FROM product_reviews
+    WHERE product_id = ?
+    ORDER BY sort_order ASC, created_at DESC
+  `,
   selectAnnouncements: `
     SELECT id, title, description, badge, cta_label, cta_url, image_url, sort_order, is_active
     FROM announcements
@@ -1418,6 +1498,19 @@ app.get('/api/products/:id', async (req, res, next) => {
       return res.status(404).json({ message: 'Producto no encontrado.' })
     }
     return res.json({ product })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.get('/api/products/:id/reviews', async (req, res, next) => {
+  try {
+    const productId = String(req.params.id || '').trim()
+    if (!productId) {
+      return res.status(400).json({ message: 'Producto inválido.' })
+    }
+    const reviews = await fetchProductReviews(productId, { includeInactive: false })
+    return res.json({ reviews })
   } catch (error) {
     return next(error)
   }
@@ -2472,6 +2565,62 @@ app.get('/api/admin/announcements', requireAuth, requireAdmin, async (_req, res,
   }
 })
 
+app.get('/api/admin/products/:id/reviews', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const productId = String(req.params.id || '').trim()
+    if (!productId) return res.status(400).json({ message: 'Producto inválido.' })
+    const reviews = await fetchProductReviews(productId, { includeInactive: true })
+    res.json({ reviews })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/admin/products/:id/reviews', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const productId = String(req.params.id || '').trim()
+    if (!productId) return res.status(400).json({ message: 'Producto inválido.' })
+    const payload = {
+      productId,
+      author: sanitizeText(req.body.author) || 'Cliente',
+      rating: safeInteger(req.body.rating, 5),
+      comment: sanitizeText(req.body.comment) || '',
+      imageUrl: sanitizeText(req.body.imageUrl),
+      sortOrder: safeInteger(req.body.sortOrder, 0),
+      isActive: req.body.isActive !== undefined ? Boolean(req.body.isActive) : true
+    }
+    const connection = await getPool().getConnection()
+    try {
+      await connection.execute(
+        `
+          INSERT INTO product_reviews (product_id, author, rating, comment, image_url, sort_order, is_active)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `,
+        [payload.productId, payload.author, payload.rating, payload.comment, payload.imageUrl || null, payload.sortOrder, payload.isActive ? 1 : 0]
+      )
+      const [rows] = await connection.execute('SELECT * FROM product_reviews WHERE product_id = ? ORDER BY created_at DESC LIMIT 1', [productId])
+      const review = rows[0] ? toReviewDto(rows[0]) : null
+      res.status(201).json({ review })
+    } finally {
+      connection.release()
+    }
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/admin/products/:productId/reviews/:reviewId', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const productId = String(req.params.productId || '').trim()
+    const reviewId = safeInteger(req.params.reviewId, 0)
+    if (!productId || !reviewId) return res.status(400).json({ message: 'Solicitud inválida.' })
+    await query('DELETE FROM product_reviews WHERE id = ? AND product_id = ?', [reviewId, productId])
+    res.status(204).send()
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.post('/api/admin/announcements', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const payload = normalizeAnnouncementPayload(req.body, req.body?.title)
@@ -2609,7 +2758,21 @@ if (canServeClient) {
 
 app.use((err, _req, res, _next) => {
   console.error('[server] error:', err)
-  res.status(500).json({ message: 'Ocurrió un error inesperado.' })
+
+  const isPayloadTooLarge = err?.type === 'entity.too.large'
+  let status = err?.status || (isPayloadTooLarge ? 413 : 500)
+  let message = 'Ocurrió un error inesperado.'
+
+  if (err?.code === 'ER_DATA_TOO_LONG') {
+    status = 400
+    message = 'El archivo o texto es demasiado grande. Reduce el peso de la imagen o el tamaño del contenido.'
+  } else if (isPayloadTooLarge) {
+    message = 'La solicitud es demasiado grande. Usa imágenes más livianas o reduce el contenido.'
+  } else if (status >= 400 && status < 500 && typeof err?.message === 'string') {
+    message = err.message
+  }
+
+  res.status(status).json({ message })
 })
 
 initDatabase()

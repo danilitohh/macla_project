@@ -13,13 +13,15 @@ import {
 } from '../services/catalogService'
 import { useAuth } from '../hooks/useAuth'
 
-const asList = (value: string) =>
+const asList = (value: string, { allowComma = true } = {}) =>
   value
-    .split(/\n|,/)
+    .split(allowComma ? /\n|,/ : /\n/)
     .map((item) => item.trim())
     .filter(Boolean)
 
 const toMultiline = (items?: string[]) => (items && items.length ? items.join('\n') : '')
+
+const MAX_MEDIA_MB = 50
 
 type ProductFormState = {
   name: string
@@ -66,9 +68,9 @@ const AdminPage = () => {
   const [productPage, setProductPage] = useState(1)
   const pageSize = 10
 
-  const readFilesAsDataUrls = async (fileList: FileList | null): Promise<string[]> => {
-    if (!fileList || fileList.length === 0) return []
-    const files = Array.from(fileList)
+  const readFilesAsDataUrls = async (input: File[] | FileList | null): Promise<string[]> => {
+    const files = input ? Array.from(input) : []
+    if (!files.length) return []
     const dataUrls = await Promise.all(
       files.map(
         (file) =>
@@ -86,6 +88,11 @@ const AdminPage = () => {
   const activeAnnouncements = useMemo(
     () => announcements.filter((item) => item.isActive),
     [announcements]
+  )
+
+  const parsedMedia = useMemo(
+    () => asList(productForm.images, { allowComma: false }),
+    [productForm.images]
   )
 
   const filteredProducts = useMemo(() => {
@@ -146,6 +153,14 @@ const AdminPage = () => {
     setEditingAnnouncementId(null)
   }
 
+  const extractErrorMessage = (error: unknown, fallback: string) => {
+    if (error && typeof error === 'object') {
+      const err = error as { message?: string; data?: { message?: string } }
+      return err.data?.message || err.message || fallback
+    }
+    return fallback
+  }
+
   const handleProductSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     try {
@@ -166,7 +181,7 @@ const AdminPage = () => {
         price: Number(productForm.price) || 0,
         stock: Number(productForm.stock) || 0,
         currency: 'COP',
-        images: asList(productForm.images),
+        images: asList(productForm.images, { allowComma: false }),
         features: asList(productForm.features),
         highlights: asList(productForm.highlights),
         tags: [],
@@ -190,7 +205,7 @@ const AdminPage = () => {
       resetProductForm()
     } catch (error) {
       console.error('[AdminPage] Error saving product', error)
-      setFeedback('No pudimos guardar el producto. Revisa los campos e inténtalo de nuevo.')
+      setFeedback(extractErrorMessage(error, 'No pudimos guardar el producto. Revisa los campos e inténtalo de nuevo.'))
     }
   }
 
@@ -225,7 +240,7 @@ const AdminPage = () => {
       resetAnnouncementForm()
     } catch (error) {
       console.error('[AdminPage] Error saving announcement', error)
-      setFeedback('No pudimos guardar el anuncio. Intenta nuevamente.')
+      setFeedback(extractErrorMessage(error, 'No pudimos guardar el anuncio. Intenta nuevamente.'))
     }
   }
 
@@ -271,6 +286,14 @@ const AdminPage = () => {
     if (editingAnnouncementId === announcementId) {
       resetAnnouncementForm()
     }
+  }
+
+  const removeMediaAt = (index: number) => {
+    setProductForm((prev) => {
+      const next = asList(prev.images, { allowComma: false })
+      next.splice(index, 1)
+      return { ...prev, images: next.join('\n') }
+    })
   }
 
   return (
@@ -453,22 +476,52 @@ const AdminPage = () => {
                     </label>
                   </div>
                   <label>
-                    Imágenes
+                    Galería (imágenes y videos)
                     <input
                       type="file"
                       multiple
-                      accept="image/*"
+                      accept="image/*,video/*"
                       onChange={async (event) => {
-                        const urls = await readFilesAsDataUrls(event.target.files)
+                        const selected = Array.from(event.target.files ?? []) as File[]
+                        const [valid, skipped] = selected.reduce<[File[], File[]]>(
+                          (acc, file) => {
+                            if (file.size <= MAX_MEDIA_MB * 1024 * 1024) acc[0].push(file)
+                            else acc[1].push(file)
+                            return acc
+                          },
+                          [[], []]
+                        )
+                        if (skipped.length) {
+                          setFeedback(
+                            `Saltamos ${skipped.length} archivo(s) por exceder ${MAX_MEDIA_MB}MB. Súbelos comprimidos o como enlace.`
+                          )
+                        }
+                        const urls = await readFilesAsDataUrls(valid)
                         if (!urls.length) return
-                        setProductForm((prev) => ({
-                          ...prev,
-                          images: urls.join('\n')
-                        }))
+                        setProductForm((prev) => {
+                          const next = [...asList(prev.images, { allowComma: false }), ...urls]
+                          return { ...prev, images: next.join('\n') }
+                        })
                         event.target.value = ''
                       }}
                     />
-                    <p className="muted">Sube imágenes (se guardan como data URL en el producto).</p>
+                    <p className="muted">Sube varias a la vez; se guardan como data URL o ruta pública.</p>
+                    {parsedMedia.length > 0 && (
+                      <div className="media-list">
+                        {parsedMedia.map((src, index) => {
+                          const isVideo = /^data:video\//i.test(src) || /\.(mp4|webm|ogg)(\?.*)?$/i.test(src)
+                          return (
+                            <div key={`${src}-${index}`} className="media-chip">
+                              <span>{isVideo ? 'Video' : 'Imagen'} {index + 1}</span>
+                              <button type="button" onClick={() => removeMediaAt(index)} aria-label="Eliminar adjunto">
+                                ×
+                              </button>
+                            </div>
+                          )
+                        })}
+                        <p className="muted">Total adjuntos: {parsedMedia.length}</p>
+                      </div>
+                    )}
                   </label>
                   <label>
                     Características (una por línea)
