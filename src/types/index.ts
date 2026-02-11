@@ -181,6 +181,8 @@ export interface Review {
   rating: number;
   comment: string;
   imageUrl?: string | null;
+  imageUrls?: string[];
   isActive: boolean;
   sortOrder: number;
+  createdAt?: string;
 }

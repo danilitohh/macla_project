@@ -17,6 +17,17 @@ export const getProductReviews = async (productId: string): Promise<Review[]> =>
   return Array.isArray(result.reviews) ? result.reviews : []
 }
 
+export const createProductReview = async (
+  productId: string,
+  payload: { author?: string; rating: number; comment: string; images?: string[] }
+): Promise<Review> => {
+  const result = await request<{ review: Review }>(`/products/${productId}/reviews`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+  return result.review
+}
+
 export const getAnnouncements = async (): Promise<Announcement[]> => {
   const result = await request<{ announcements: Announcement[] }>('/announcements', { method: 'GET' })
   return Array.isArray(result.announcements) ? result.announcements : []

@@ -90,9 +90,20 @@ const toReviewDto = (row) => ({
   author: row.author,
   rating: safeInteger(row.rating, 5),
   comment: row.comment,
-  imageUrl: row.image_url || null,
+  imageUrls:
+    Array.isArray(parseJsonSafe(row.image_url)) && parseJsonSafe(row.image_url)
+      ? parseJsonSafe(row.image_url)
+      : row.image_url
+        ? [row.image_url]
+        : [],
+  imageUrl: (() => {
+    const parsed = parseJsonSafe(row.image_url);
+    if (Array.isArray(parsed) && parsed.length) return parsed[0];
+    return row.image_url || null;
+  })(),
   sortOrder: safeInteger(row.sort_order, 0),
   isActive: Boolean(row.is_active),
+  createdAt: row.created_at,
 });
 
 const ensureUploadsDir = async () => {
@@ -701,6 +712,13 @@ const sanitizeArrayOfText = (value) =>
         .map((entry) => sanitizeText(entry))
         .filter(Boolean)
         .slice(0, 20)
+    : [];
+const sanitizeArrayOfMedia = (value) =>
+  Array.isArray(value)
+    ? value
+        .map((entry) => sanitizeText(entry))
+        .filter((item) => !!item)
+        .slice(0, 5)
     : [];
 
 const sanitizeSpecs = (value) => {
@@ -1734,6 +1752,51 @@ app.get("/api/products/:id/reviews", async (req, res, next) => {
       includeInactive: false,
     });
     return res.json({ reviews });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post("/api/products/:id/reviews", async (req, res, next) => {
+  try {
+    const productId = String(req.params.id || "").trim();
+    if (!productId) {
+      return res.status(400).json({ message: "Producto inválido." });
+    }
+    const author =
+      sanitizeText(req.body.author) ||
+      (req.user?.name ? sanitizeText(req.user.name) : "Cliente");
+    const rating = Math.min(5, Math.max(1, safeInteger(req.body.rating, 5)));
+    const comment = sanitizeText(req.body.comment);
+    const images = sanitizeArrayOfMedia(
+      req.body.images || req.body.imageUrls || (req.body.imageUrl ? [req.body.imageUrl] : []),
+    );
+    if (!comment || comment.length < 4) {
+      return res
+        .status(400)
+        .json({ message: "Cuéntanos tu experiencia en al menos 4 caracteres." });
+    }
+    const imagePayload =
+      images.length > 1 ? JSON.stringify(images) : images[0] ? images[0] : null;
+
+    const connection = await getPool().getConnection();
+    try {
+      await connection.execute(
+        `
+          INSERT INTO product_reviews (product_id, author, rating, comment, image_url, sort_order, is_active)
+          VALUES (?, ?, ?, ?, ?, 0, 1)
+        `,
+        [productId, author, rating, comment, imagePayload],
+      );
+      const [rows] = await connection.execute(
+        "SELECT * FROM product_reviews WHERE product_id = ? ORDER BY created_at DESC LIMIT 1",
+        [productId],
+      );
+      const review = rows[0] ? toReviewDto(rows[0]) : null;
+      return res.status(201).json({ review });
+    } finally {
+      connection.release();
+    }
   } catch (error) {
     return next(error);
   }
@@ -3039,7 +3102,13 @@ app.post(
         author: sanitizeText(req.body.author) || "Cliente",
         rating: safeInteger(req.body.rating, 5),
         comment: sanitizeText(req.body.comment) || "",
-        imageUrl: sanitizeText(req.body.imageUrl),
+        imageUrl: (() => {
+          const imgs = sanitizeArrayOfMedia(
+            req.body.images || req.body.imageUrls || (req.body.imageUrl ? [req.body.imageUrl] : []),
+          );
+          if (imgs.length > 1) return JSON.stringify(imgs);
+          return imgs[0] || null;
+        })(),
         sortOrder: safeInteger(req.body.sortOrder, 0),
         isActive:
           req.body.isActive !== undefined ? Boolean(req.body.isActive) : true,

@@ -3,8 +3,8 @@ import { useParams, Link, Navigate } from "react-router-dom";
 import { products as fallbackProducts } from "../data/products";
 import { formatCurrency } from "../utils/format";
 import { useCart } from "../hooks/useCart";
-import type { Product, ProductContent } from "../types";
-import { getProductById } from "../services/catalogService";
+import type { Product, ProductContent, Review } from "../types";
+import { createProductReview, getProductById, getProductReviews } from "../services/catalogService";
 
 const defaultPlanchaContent: ProductContent = {
   accordion: [
@@ -152,6 +152,20 @@ const ProductDetail = () => {
   const [openSection, setOpenSection] = useState<string | null>(null);
   const [sliderValue, setSliderValue] = useState(50);
   const [openFaq, setOpenFaq] = useState<string | null>(null);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(true);
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [reviewForm, setReviewForm] = useState<{
+    author: string;
+    rating: number;
+    comment: string;
+    images: string[];
+  }>({
+    author: "",
+    rating: 5,
+    comment: "",
+    images: [],
+  });
   const { addItem } = useCart();
 
   useEffect(() => {
@@ -196,6 +210,24 @@ const ProductDetail = () => {
     const list = Array.isArray(product?.images) ? (product?.images ?? []) : [];
     return list.length ? list : ["/hero-macla.png"];
   }, [product]);
+
+  const readFilesAsDataUrls = async (files: File[]) => {
+    const MAX_MB = 6;
+    const valid = files.filter((file) => file.size <= MAX_MB * 1024 * 1024);
+    const results = await Promise.all(
+      valid.map(
+        (file) =>
+          new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () =>
+              resolve(typeof reader.result === "string" ? reader.result : "");
+            reader.onerror = () => resolve("");
+            reader.readAsDataURL(file);
+          }),
+      ),
+    );
+    return results.filter(Boolean);
+  };
 
   const handleNext = () => {
     if (media.length <= 1) return;
@@ -247,6 +279,11 @@ const ProductDetail = () => {
   const productDetails = content?.details ?? [];
   const productFaqs = content?.faqs ?? [];
   const reference = content?.reference;
+  const averageRating = useMemo(() => {
+    if (!reviews.length) return 0;
+    const sum = reviews.reduce((acc, r) => acc + (r.rating || 0), 0);
+    return Math.round((sum / reviews.length) * 10) / 10;
+  }, [reviews]);
 
   useEffect(() => {
     setOpenSection(accordionSections[0]?.title ?? null);
@@ -256,12 +293,59 @@ const ProductDetail = () => {
     setOpenFaq(productFaqs[0]?.question ?? null);
   }, [product?.id, productFaqs]);
 
+  useEffect(() => {
+    const loadReviews = async () => {
+      if (!product?.id) return;
+      setReviewsLoading(true);
+      try {
+        const data = await getProductReviews(product.id);
+        setReviews(data);
+      } catch (err) {
+        console.error("[ProductDetail] Error fetching reviews", err);
+      } finally {
+        setReviewsLoading(false);
+      }
+    };
+    loadReviews();
+  }, [product?.id]);
+
   const toggleSection = (title: string) => {
     setOpenSection((prev) => (prev === title ? null : title));
   };
 
   const toggleFaq = (question: string) => {
     setOpenFaq((prev) => (prev === question ? null : question));
+  };
+
+  const handleReviewSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!product?.id) return;
+    if (!reviewForm.comment.trim()) return;
+    setSubmittingReview(true);
+    try {
+      const review = await createProductReview(product.id, {
+        author: reviewForm.author.trim() || "Cliente",
+        rating: reviewForm.rating,
+        comment: reviewForm.comment.trim(),
+        images: reviewForm.images,
+      });
+      setReviews((prev) => [review, ...prev]);
+      setReviewForm({ author: "", rating: 5, comment: "", images: [] });
+    } catch (err) {
+      console.error("[ProductDetail] Error creating review", err);
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
+  const handleReviewFiles = async (files: FileList | null) => {
+    if (!files) return;
+    const dataUrls = await readFilesAsDataUrls(Array.from(files).slice(0, 4));
+    if (!dataUrls.length) return;
+    setReviewForm((prev) => ({
+      ...prev,
+      images: [...prev.images, ...dataUrls].slice(0, 4),
+    }));
   };
 
   if (!id) {
@@ -593,6 +677,149 @@ const ProductDetail = () => {
             </div>
           </div>
         )}
+
+        <div className="container">
+          <div className="reviews">
+            <div className="reviews__header">
+              <h3>Reseñas de clientes</h3>
+              <div className="reviews__score">
+                <span className="reviews__score-number">
+                  {averageRating ? averageRating.toFixed(1) : "—"}
+                </span>
+                <span className="reviews__score-stars">
+                  {"★".repeat(Math.round(averageRating) || 0).padEnd(5, "☆")}
+                </span>
+                <span className="muted">
+                  {reviews.length} {reviews.length === 1 ? "reseña" : "reseñas"}
+                </span>
+              </div>
+            </div>
+
+            <div className="reviews__grid">
+              <form className="review-form" onSubmit={handleReviewSubmit}>
+                <label>
+                  Tu nombre (opcional)
+                  <input
+                    type="text"
+                    value={reviewForm.author}
+                    onChange={(e) =>
+                      setReviewForm({ ...reviewForm, author: e.target.value })
+                    }
+                  />
+                </label>
+
+                <label>
+                  Calificación
+                  <div className="rating-input">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        type="button"
+                        key={star}
+                        className={
+                          star <= reviewForm.rating
+                            ? "rating-input__star is-active"
+                            : "rating-input__star"
+                        }
+                        onClick={() =>
+                          setReviewForm({ ...reviewForm, rating: star })
+                        }
+                        aria-label={`Calificar con ${star} estrella${
+                          star > 1 ? "s" : ""
+                        }`}
+                      >
+                        ★
+                      </button>
+                    ))}
+                  </div>
+                </label>
+
+                <label>
+                  Comentario
+                  <textarea
+                    required
+                    minLength={4}
+                    value={reviewForm.comment}
+                    onChange={(e) =>
+                      setReviewForm({ ...reviewForm, comment: e.target.value })
+                    }
+                    placeholder="Cuéntanos qué tal te fue con el producto…"
+                  />
+                </label>
+
+                <label>
+                  Fotos (hasta 4)
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(e) => handleReviewFiles(e.target.files)}
+                  />
+                  {reviewForm.images.length > 0 && (
+                    <div className="review-form__thumbs">
+                      {reviewForm.images.map((img, idx) => (
+                        <button
+                          key={img}
+                          type="button"
+                          className="review-form__thumb"
+                          onClick={() =>
+                            setReviewForm((prev) => ({
+                              ...prev,
+                              images: prev.images.filter((_, i) => i !== idx),
+                            }))
+                          }
+                          aria-label="Quitar imagen"
+                        >
+                          <img src={img} alt={`Foto ${idx + 1}`} />
+                          <span>×</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="muted">
+                    Se guardan en formato seguro. Máx 6MB por imagen.
+                  </p>
+                </label>
+
+                <button
+                  type="submit"
+                  className="btn btn--primary"
+                  disabled={submittingReview}
+                >
+                  {submittingReview ? "Enviando…" : "Enviar reseña"}
+                </button>
+              </form>
+
+              <div className="reviews__list">
+                {reviewsLoading ? (
+                  <p className="muted">Cargando reseñas…</p>
+                ) : reviews.length === 0 ? (
+                  <p className="muted">
+                    Aún no hay reseñas para este producto. ¡Sé la primera!
+                  </p>
+                ) : (
+                  reviews.map((review) => (
+                    <div key={review.id} className="review-card">
+                      <div className="review-card__header">
+                        <strong>{review.author || "Cliente"}</strong>
+                        <span className="review-card__stars">
+                          {"★".repeat(review.rating).padEnd(5, "☆")}
+                        </span>
+                      </div>
+                      <p className="review-card__comment">{review.comment}</p>
+                      {review.imageUrls && review.imageUrls.length > 0 && (
+                        <div className="review-card__images">
+                          {review.imageUrls.map((img) => (
+                            <img key={img} src={img} alt="Foto de cliente" />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
 
         {productDetails.length > 0 && (
           <div className="container">
