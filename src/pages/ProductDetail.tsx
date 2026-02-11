@@ -300,183 +300,191 @@ const ProductDetail = () => {
     <div className="page">
       <section className="section section--product-full">
         <div className="container product-detail">
-          <div className="product-detail__gallery">
-            <div className="product-detail__viewer">
-              {media.length > 1 && (
-                <button
-                  type="button"
-                  className="gallery-nav gallery-nav--prev"
-                  onClick={handlePrev}
-                  aria-label="Anterior"
-                >
-                  ‹
-                </button>
-              )}
-              <div className="product-detail__frame">
-                {renderMedia(
-                  media[Math.min(currentIndex, media.length - 1) || 0],
+          <div className="product-detail__top">
+            <div className="product-detail__gallery">
+              <div className="product-detail__viewer">
+                {media.length > 1 && (
+                  <button
+                    type="button"
+                    className="gallery-nav gallery-nav--prev"
+                    onClick={handlePrev}
+                    aria-label="Anterior"
+                  >
+                    ‹
+                  </button>
+                )}
+                <div className="product-detail__frame">
+                  {renderMedia(
+                    media[Math.min(currentIndex, media.length - 1) || 0],
+                  )}
+                </div>
+                {media.length > 1 && (
+                  <button
+                    type="button"
+                    className="gallery-nav gallery-nav--next"
+                    onClick={handleNext}
+                    aria-label="Siguiente"
+                  >
+                    ›
+                  </button>
                 )}
               </div>
+
               {media.length > 1 && (
-                <button
-                  type="button"
-                  className="gallery-nav gallery-nav--next"
-                  onClick={handleNext}
-                  aria-label="Siguiente"
-                >
-                  ›
-                </button>
+                <div className="product-detail__thumbs">
+                  <div className="thumbs-scroll">
+                    {media.map((src, index) => {
+                      const isActive = index === currentIndex;
+                      const isVideo = isVideoSrc(src);
+                      return (
+                        <button
+                          key={src}
+                          type="button"
+                          className={isActive ? "thumb is-active" : "thumb"}
+                          onClick={() => setCurrentIndex(index)}
+                        >
+                          {isVideo ? (
+                            <video
+                              src={src}
+                              muted
+                              playsInline
+                              preload="metadata"
+                              aria-label={`Video ${index + 1}`}
+                            />
+                          ) : (
+                            <img
+                              src={src}
+                              alt={`Vista ${index + 1}`}
+                              loading="lazy"
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="thumbs-nav">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentIndex((prev) => Math.max(0, prev - 1))
+                      }
+                      disabled={currentIndex === 0}
+                      aria-label="Anterior miniatura"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentIndex((prev) =>
+                          Math.min(media.length - 1, prev + 1),
+                        )
+                      }
+                      disabled={currentIndex === media.length - 1}
+                      aria-label="Siguiente miniatura"
+                    >
+                      ↓
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
-
-            {media.length > 1 && (
-              <div className="product-detail__thumbs">
-                <div className="thumbs-scroll">
-                  {media.map((src, index) => {
-                    const isActive = index === currentIndex;
-                    const isVideo = isVideoSrc(src);
-                    return (
-                      <button
-                        key={src}
-                        type="button"
-                        className={isActive ? "thumb is-active" : "thumb"}
-                        onClick={() => setCurrentIndex(index)}
-                      >
-                        {isVideo ? (
-                          <video
-                            src={src}
-                            muted
-                            playsInline
-                            preload="metadata"
-                            aria-label={`Video ${index + 1}`}
-                          />
-                        ) : (
-                          <img
-                            src={src}
-                            alt={`Vista ${index + 1}`}
-                            loading="lazy"
-                          />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="thumbs-nav">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setCurrentIndex((prev) => Math.max(0, prev - 1))
-                    }
-                    disabled={currentIndex === 0}
-                    aria-label="Anterior miniatura"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setCurrentIndex((prev) =>
-                        Math.min(media.length - 1, prev + 1),
-                      )
-                    }
-                    disabled={currentIndex === media.length - 1}
-                    aria-label="Siguiente miniatura"
-                  >
-                    ↓
-                  </button>
-                </div>
+            <div className="product-detail__info">
+              {error && <p className="muted">{error}</p>}
+              <Link
+                to={`/productos?categoria=${product.category}`}
+                className="badge badge--muted"
+              >
+                {product.category.toUpperCase()}
+              </Link>
+              <h1>{product.name}</h1>
+              <p className="lead">{product.description}</p>
+              <div className="product-detail__price">
+                {formatCurrency(product.price, product.currency)}
               </div>
-            )}
-          </div>
-          <div className="product-detail__info">
-            {error && <p className="muted">{error}</p>}
-            <Link
-              to={`/productos?categoria=${product.category}`}
-              className="badge badge--muted"
-            >
-              {product.category.toUpperCase()}
-            </Link>
-            <h1>{product.name}</h1>
-            <p className="lead">{product.description}</p>
-            <div className="product-detail__price">
-              {formatCurrency(product.price, product.currency)}
-            </div>
-            <div className="pill-list">
-              <span className="pill">Garantía 1 mes</span>
-              <span className="pill">Envío a toda Colombia</span>
-              <span className="pill">Pago seguro</span>
-            </div>
-            <p className="muted">Stock disponible: {product.stock}</p>
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={() => addItem(product, 1)}
-            >
-              Añadir al carrito
-            </button>
+              <div className="pill-list">
+                <span className="pill">Garantía 1 mes</span>
+                <span className="pill">Envío a toda Colombia</span>
+                <span className="pill">Pago seguro</span>
+              </div>
+              <p className="muted">Stock disponible: {product.stock}</p>
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => addItem(product, 1)}
+              >
+                Añadir al carrito
+              </button>
 
-            <div className="product-detail__section">
+              {product.specs && (
+                <div className="product-detail__section">
+                  <h3>Especificaciones técnicas</h3>
+                  <dl className="spec-list">
+                    {Object.entries(product.specs).map(
+                      ([specKey, specValue]) => (
+                        <div key={specKey}>
+                          <dt>{specKey}</dt>
+                          <dd>{specValue}</dd>
+                        </div>
+                      ),
+                    )}
+                  </dl>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="product-detail__meta">
+            <div className="product-detail__panel">
               <h3>Características clave</h3>
               <ul className="checklist">
                 {product.features.map((feature) => (
                   <li key={feature}>{feature}</li>
                 ))}
               </ul>
+
+              {product.highlights.length > 0 && (
+                <div className="product-detail__section product-detail__section--tight">
+                  <h4>Lo que más encanta</h4>
+                  <ul className="bullet-list">
+                    {product.highlights.map((highlight) => (
+                      <li key={highlight}>{highlight}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
 
-            {product.highlights.length > 0 && (
-              <div className="product-detail__section">
-                <h3>Lo que más encanta</h3>
-                <ul className="bullet-list">
-                  {product.highlights.map((highlight) => (
-                    <li key={highlight}>{highlight}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {product.specs && (
-              <div className="product-detail__section">
-                <h3>Especificaciones técnicas</h3>
-                <dl className="spec-list">
-                  {Object.entries(product.specs).map(([specKey, specValue]) => (
-                    <div key={specKey}>
-                      <dt>{specKey}</dt>
-                      <dd>{specValue}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
-            )}
-
-            {accordionSections.length > 0 && (
-              <div className="accordion">
-                {accordionSections.map((section) => {
-                  const isOpen = openSection === section.title;
-                  return (
-                    <div key={section.title} className="accordion__item">
-                      <button
-                        type="button"
-                        className="accordion__header"
-                        onClick={() => toggleSection(section.title)}
-                      >
-                        <span>{section.title}</span>
-                        <span className="accordion__icon">
-                          {isOpen ? "−" : "+"}
-                        </span>
-                      </button>
-                      {isOpen && (
-                        <ul className="accordion__list">
-                          {section.items.map((item) => (
-                            <li key={item}>{item}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <div className="product-detail__panel product-detail__panel--accordion">
+              {accordionSections.length > 0 && (
+                <div className="accordion accordion--flush">
+                  {accordionSections.map((section) => {
+                    const isOpen = openSection === section.title;
+                    return (
+                      <div key={section.title} className="accordion__item">
+                        <button
+                          type="button"
+                          className="accordion__header"
+                          onClick={() => toggleSection(section.title)}
+                        >
+                          <span>{section.title}</span>
+                          <span className="accordion__icon">
+                            {isOpen ? "−" : "+"}
+                          </span>
+                        </button>
+                        {isOpen && (
+                          <ul className="accordion__list">
+                            {section.items.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

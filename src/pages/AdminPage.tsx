@@ -13,6 +13,7 @@ import {
   updateAdminProduct,
   upsertAdminDiscount,
   deleteAdminDiscount,
+  getProducts as getPublicProducts,
 } from "../services/catalogService";
 import { useAuth } from "../hooks/useAuth";
 import { formatCurrency } from "../utils/format";
@@ -156,7 +157,6 @@ type ProductFormState = {
   stock: string;
   images: string;
   features: string;
-  highlights: string;
   benefits: string;
   howTo: string;
   faqs: string;
@@ -190,7 +190,6 @@ const defaultProductForm: ProductFormState = {
   stock: "0",
   images: "",
   features: "",
-  highlights: "",
   benefits: "",
   howTo: "",
   faqs: "",
@@ -270,6 +269,11 @@ const AdminPage = () => {
     return dataUrls.filter(Boolean);
   };
 
+  const appendTemplateLine = (value: string, line: string) => {
+    const trimmed = value.trim();
+    return trimmed ? `${trimmed}\n${line}` : line;
+  };
+
   const activeAnnouncements = useMemo(
     () => announcements.filter((item) => item.isActive),
     [announcements],
@@ -305,9 +309,16 @@ const AdminPage = () => {
       try {
         const [remoteProducts, remoteAnnouncements, remoteDiscounts] =
           await Promise.all([
-            getAdminProducts(),
+            getAdminProducts().catch(async (err) => {
+              console.warn(
+                "[AdminPage] admin products fallback -> public",
+                err,
+              );
+              const publicProducts = await getPublicProducts();
+              return publicProducts;
+            }),
             getAdminAnnouncements(),
-            getAdminDiscounts(),
+            getAdminDiscounts().catch(() => []),
           ]);
         if (!isMounted) return;
         setProducts(remoteProducts);
@@ -419,7 +430,6 @@ const AdminPage = () => {
         currency: "COP",
         images: asList(productForm.images, { allowComma: false }),
         features: asList(productForm.features),
-        highlights: asList(productForm.highlights),
         content: Object.keys(content).length ? content : undefined,
         tags: [],
         isActive: true,
@@ -564,7 +574,6 @@ const AdminPage = () => {
       stock: String(product.stock),
       images: product.images.join("\n"),
       features: toMultiline(product.features),
-      highlights: toMultiline(product.highlights),
       benefits: toLines.benefits(product.content?.benefits),
       howTo: toLines.howTo(product.content?.howTo),
       faqs: toLines.faqs(product.content?.faqs),
@@ -968,18 +977,6 @@ const AdminPage = () => {
                       }
                     />
                   </label>
-                  <label>
-                    Destacados (una por línea)
-                    <textarea
-                      value={productForm.highlights}
-                      onChange={(event) =>
-                        setProductForm({
-                          ...productForm,
-                          highlights: event.target.value,
-                        })
-                      }
-                    />
-                  </label>
                   <div className="form__group">
                     <p className="muted">
                       Secciones opcionales de la página de producto. Déjalas
@@ -998,6 +995,28 @@ const AdminPage = () => {
                           })
                         }
                       />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (event) => {
+                          const file = event.target.files?.[0];
+                          if (!file) return;
+                          const [url] = await readFilesAsDataUrls([file]);
+                          if (!url) return;
+                          setProductForm((prev) => ({
+                            ...prev,
+                            benefits: appendTemplateLine(
+                              prev.benefits,
+                              `✨ | Título | Descripción | ${url}`,
+                            ),
+                          }));
+                          event.target.value = "";
+                        }}
+                      />
+                      <p className="muted">
+                        Sube una imagen y añadiremos la línea con el formato
+                        correcto; luego edita emoji/título/descripcion.
+                      </p>
                     </label>
                     <label>
                       Cómo usar (formato: título | imagen)
@@ -1011,6 +1030,28 @@ const AdminPage = () => {
                           })
                         }
                       />
+                      <input
+                        type="file"
+                        accept="image/*,video/*"
+                        onChange={async (event) => {
+                          const file = event.target.files?.[0];
+                          if (!file) return;
+                          const [url] = await readFilesAsDataUrls([file]);
+                          if (!url) return;
+                          setProductForm((prev) => ({
+                            ...prev,
+                            howTo: appendTemplateLine(
+                              prev.howTo,
+                              `Paso | ${url}`,
+                            ),
+                          }));
+                          event.target.value = "";
+                        }}
+                      />
+                      <p className="muted">
+                        También puedes subir video corto; se guardará como data
+                        URL listo para usar.
+                      </p>
                     </label>
                     <label>
                       FAQs (formato: pregunta | respuesta)
@@ -1064,6 +1105,21 @@ const AdminPage = () => {
                           })
                         }
                       />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (event) => {
+                          const file = event.target.files?.[0];
+                          if (!file) return;
+                          const [url] = await readFilesAsDataUrls([file]);
+                          if (!url) return;
+                          setProductForm((prev) => ({
+                            ...prev,
+                            referenceBefore: url,
+                          }));
+                          event.target.value = "";
+                        }}
+                      />
                     </label>
                     <label>
                       Referencia (después)
@@ -1077,6 +1133,21 @@ const AdminPage = () => {
                             referenceAfter: event.target.value,
                           })
                         }
+                      />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (event) => {
+                          const file = event.target.files?.[0];
+                          if (!file) return;
+                          const [url] = await readFilesAsDataUrls([file]);
+                          if (!url) return;
+                          setProductForm((prev) => ({
+                            ...prev,
+                            referenceAfter: url,
+                          }));
+                          event.target.value = "";
+                        }}
                       />
                     </label>
                     <label>
@@ -1131,6 +1202,21 @@ const AdminPage = () => {
                           })
                         }
                       />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (event) => {
+                          const file = event.target.files?.[0];
+                          if (!file) return;
+                          const [url] = await readFilesAsDataUrls([file]);
+                          if (!url) return;
+                          setProductForm((prev) => ({
+                            ...prev,
+                            bannerLeft: url,
+                          }));
+                          event.target.value = "";
+                        }}
+                      />
                     </label>
                     <label>
                       Banner derecho (opcional)
@@ -1144,6 +1230,21 @@ const AdminPage = () => {
                             bannerRight: event.target.value,
                           })
                         }
+                      />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (event) => {
+                          const file = event.target.files?.[0];
+                          if (!file) return;
+                          const [url] = await readFilesAsDataUrls([file]);
+                          if (!url) return;
+                          setProductForm((prev) => ({
+                            ...prev,
+                            bannerRight: url,
+                          }));
+                          event.target.value = "";
+                        }}
                       />
                     </label>
                   </div>
