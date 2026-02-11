@@ -833,24 +833,19 @@ main {
 
 .reviews__grid {
   display: grid;
-  gap: 1.4rem;
-  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 1.2rem;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   align-items: start;
-}
-
-@media (max-width: 900px) {
-  .reviews__grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 .review-form {
   background: #fff;
   border-radius: calc(var(--radius) * 1.1);
   box-shadow: var(--shadow-light);
-  padding: 1.2rem;
+  padding: 1.35rem;
   display: grid;
-  gap: 0.9rem;
+  gap: 1rem;
+  border: 1px solid rgba(0, 0, 0, 0.03);
 }
 
 .rating-input {
@@ -863,8 +858,10 @@ main {
   background: transparent;
   font-size: 1.4rem;
   cursor: pointer;
-  color: #d4c2c8;
-  transition: transform 0.1s ease, color 0.1s ease;
+  color: transparent;
+  -webkit-text-stroke: 2px #f8a61c;
+  transition: transform 0.1s ease, color 0.12s ease;
+  padding: 0;
 }
 
 .rating-input__star.is-active {
@@ -915,9 +912,10 @@ main {
   background: #fff;
   border-radius: calc(var(--radius) * 1.1);
   box-shadow: var(--shadow-light);
-  padding: 1.2rem;
+  padding: 1.35rem;
   display: grid;
   gap: 1rem;
+  border: 1px solid rgba(0, 0, 0, 0.03);
 }
 
 .review-card {
@@ -959,6 +957,18 @@ main {
   object-fit: cover;
   border-radius: calc(var(--radius) * 0.6);
   box-shadow: var(--shadow-light);
+}
+
+.reviews__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(255, 85, 196, 0.1);
+  color: var(--color-ink);
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.9rem;
 }
 
 .product-faq {

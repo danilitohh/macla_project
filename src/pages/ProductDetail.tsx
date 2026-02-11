@@ -166,6 +166,7 @@ const ProductDetail = () => {
     comment: "",
     images: [],
   });
+  const [ratingHover, setRatingHover] = useState<number | null>(null);
   const { addItem } = useCart();
 
   useEffect(() => {
@@ -678,22 +679,19 @@ const ProductDetail = () => {
           </div>
         )}
 
-        <div className="container">
-          <div className="reviews">
-            <div className="reviews__header">
-              <h3>Reseñas de clientes</h3>
-              <div className="reviews__score">
-                <span className="reviews__score-number">
-                  {averageRating ? averageRating.toFixed(1) : "—"}
-                </span>
-                <span className="reviews__score-stars">
-                  {"★".repeat(Math.round(averageRating) || 0).padEnd(5, "☆")}
-                </span>
-                <span className="muted">
-                  {reviews.length} {reviews.length === 1 ? "reseña" : "reseñas"}
-                </span>
+          <div className="container">
+            <div className="reviews">
+              <div className="reviews__header">
+                <h3>Reseñas de clientes</h3>
+                <div className="reviews__score">
+                  <span className="reviews__pill">
+                    {averageRating ? `${averageRating.toFixed(1)} ★` : "Sin notas"}
+                  </span>
+                  <span className="muted">
+                    {reviews.length} {reviews.length === 1 ? "reseña" : "reseñas"}
+                  </span>
+                </div>
               </div>
-            </div>
 
             <div className="reviews__grid">
               <form className="review-form" onSubmit={handleReviewSubmit}>
@@ -710,24 +708,26 @@ const ProductDetail = () => {
 
                 <label>
                   Calificación
-                  <div className="rating-input">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        type="button"
-                        key={star}
-                        className={
-                          star <= reviewForm.rating
-                            ? "rating-input__star is-active"
-                            : "rating-input__star"
-                        }
-                        onClick={() =>
-                          setReviewForm({ ...reviewForm, rating: star })
-                        }
-                        aria-label={`Calificar con ${star} estrella${
-                          star > 1 ? "s" : ""
-                        }`}
-                      >
-                        ★
+                    <div className="rating-input">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button
+                          type="button"
+                          key={star}
+                          className={
+                            star <= (ratingHover ?? reviewForm.rating)
+                              ? "rating-input__star is-active"
+                              : "rating-input__star"
+                          }
+                          onClick={() =>
+                            setReviewForm({ ...reviewForm, rating: star })
+                          }
+                          onMouseEnter={() => setRatingHover(star)}
+                          onMouseLeave={() => setRatingHover(null)}
+                          aria-label={`Calificar con ${star} estrella${
+                            star > 1 ? "s" : ""
+                          }`}
+                        >
+                          ★
                       </button>
                     ))}
                   </div>
