@@ -1,7 +1,13 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&family=Sacramento&family=Playfair+Display:wght@500;600;700&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&family=Sacramento&family=Playfair+Display:wght@500;600;700&display=swap");
 
 :root {
-  font-family: 'Manrope', 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family:
+    "Manrope",
+    "DM Sans",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
   line-height: 1.6;
   font-weight: 400;
   color: #6b4039;
@@ -26,7 +32,12 @@
   --shadow-soft: 0 18px 45px rgba(106, 63, 60, 0.15);
   --shadow-light: 0 8px 24px rgba(106, 63, 60, 0.1);
   --gradient-hero: linear-gradient(180deg, #ffffff 0%, #ffd1f1 100%);
-  --gradient-surface: radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.6), transparent 32%),
+  --gradient-surface:
+    radial-gradient(
+      circle at 18% 18%,
+      rgba(255, 255, 255, 0.6),
+      transparent 32%
+    ),
     linear-gradient(110deg, #fff7fb 0%, #fdf0f5 55%, #fff7fb 100%);
 }
 
@@ -84,6 +95,21 @@ main {
   max-width: var(--max-width);
   margin: 0 auto;
   padding: 0 1.5rem;
+}
+
+.section--product-full {
+  padding: 0;
+}
+
+.section--product-full .container {
+  max-width: 100%;
+  padding: 0;
+}
+
+.section--product-full .product-detail {
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 0.25rem clamp(0.25rem, 0.8vw, 0.75rem);
 }
 
 .page {
@@ -145,7 +171,7 @@ main {
 }
 
 .hero h1 {
-  font-family: 'Playfair Display', 'Manrope', serif;
+  font-family: "Playfair Display", "Manrope", serif;
   font-weight: 600;
   font-size: clamp(2.4rem, 5vw, 3.5rem);
   line-height: 1.1;
@@ -214,7 +240,7 @@ main {
 }
 
 .btn:disabled,
-.btn[aria-disabled='true'] {
+.btn[aria-disabled="true"] {
   opacity: 0.5;
   pointer-events: none;
   box-shadow: none;
@@ -238,7 +264,11 @@ main {
   top: 0;
   z-index: 100;
   backdrop-filter: blur(14px);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, #ffd1f1 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.98) 0%,
+    #ffd1f1 100%
+  );
   border-bottom: none;
   overflow: visible;
 }
@@ -270,14 +300,14 @@ main {
 }
 
 .logo__title {
-  font-family: 'Times New Roman', 'TimesNewRoman', Georgia, serif;
+  font-family: "Times New Roman", "TimesNewRoman", Georgia, serif;
   font-size: clamp(1.7rem, 2.5vw, 2.2rem);
   letter-spacing: 0.04em;
   font-weight: 700;
 }
 
 .logo__subtitle {
-  font-family: 'Times New Roman', 'TimesNewRoman', Georgia, serif;
+  font-family: "Times New Roman", "TimesNewRoman", Georgia, serif;
   font-size: 0.72rem;
   letter-spacing: 0.08em;
   font-weight: 600;
@@ -358,7 +388,9 @@ main {
   flex-direction: column;
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-light);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .product-card:hover {
@@ -465,7 +497,7 @@ main {
 }
 
 .accordion__list li::before {
-  content: '✔';
+  content: "✔";
   color: var(--color-accent);
   margin-right: 0.5rem;
 }
@@ -688,7 +720,10 @@ main {
   border-radius: 24px;
   box-shadow: 0 18px 38px rgba(0, 0, 0, 0.12);
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(320px, 2.2fr) minmax(120px, 1fr);
+  grid-template-columns: minmax(120px, 1fr) minmax(320px, 2.2fr) minmax(
+      120px,
+      1fr
+    );
   gap: 1.6rem;
   align-items: center;
   position: relative;
@@ -789,7 +824,9 @@ main {
   gap: 0.35rem;
   border: 0;
   cursor: pointer;
-  transition: box-shadow 0.2s ease, transform 0.15s ease;
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.15s ease;
 }
 
 .product-faq__item:hover {
@@ -862,7 +899,7 @@ main {
 }
 
 .checklist li::before {
-  content: '▹';
+  content: "▹";
   margin-right: 0.6rem;
   color: var(--color-accent);
 }
@@ -899,7 +936,9 @@ main {
   padding: 1.8rem;
   border-radius: calc(var(--radius) * 1.1);
   box-shadow: var(--shadow-light);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .category-card:hover {
@@ -966,25 +1005,28 @@ main {
 
 .product-detail {
   display: grid;
-  gap: 3rem;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: clamp(1.5rem, 2vw, 2.2rem);
+  grid-template-columns: minmax(320px, 1.6fr) minmax(280px, 1fr);
   align-items: start;
 }
 
 .product-detail__gallery {
   display: grid;
-  gap: 1.2rem;
+  grid-template-columns: 110px 1fr;
+  gap: 1rem;
+  align-items: start;
 }
 
 .product-detail__viewer {
   position: relative;
   background: linear-gradient(180deg, #ffe3f3 0%, #fff5fb 100%);
   border-radius: calc(var(--radius) * 1);
-  padding: 1rem;
+  padding: clamp(0.8rem, 1vw, 1.2rem);
   display: grid;
   place-items: center;
   overflow: hidden;
-  min-height: 420px;
+  min-height: 520px;
+  grid-column: 2;
 }
 
 .product-detail__frame {
@@ -1016,7 +1058,9 @@ main {
   font-size: 1.6rem;
   cursor: pointer;
   color: #6b2e3b;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .gallery-nav:hover {
@@ -1034,10 +1078,46 @@ main {
 
 .product-detail__thumbs {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  padding: 0.4rem 0;
-  justify-content: center;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  grid-column: 1;
+  grid-row: 1;
+  max-height: 540px;
+  overflow: hidden;
+  position: relative;
+}
+
+.thumbs-scroll {
+  display: grid;
+  gap: 0.5rem;
+  max-height: 480px;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 86%, transparent 100%);
+}
+
+.thumbs-nav {
+  display: grid;
+  gap: 0.35rem;
+  justify-items: center;
+  margin-top: 0.35rem;
+}
+
+.thumbs-nav button {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-ink);
+  cursor: pointer;
+  box-shadow: var(--shadow-light);
+}
+
+.thumbs-nav button:disabled {
+  opacity: 0.4;
+  cursor: default;
+  box-shadow: none;
 }
 
 .thumb {
@@ -1051,7 +1131,9 @@ main {
   display: grid;
   place-items: center;
   cursor: pointer;
-  transition: border-color 0.15s ease, transform 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease;
 }
 
 .thumb video {
@@ -1322,7 +1404,9 @@ textarea {
   border-radius: calc(var(--radius) * 0.9);
   border: 1px solid var(--color-border);
   cursor: pointer;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .option input {
@@ -1802,7 +1886,9 @@ textarea {
   border-radius: 999px;
   cursor: pointer;
   font-weight: 600;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .modal__nav-btn:hover {
@@ -1915,7 +2001,7 @@ textarea {
 
   .cart-item {
     grid-template-columns: 100px 1fr;
-    grid-template-areas: 'image info' 'image subtotal';
+    grid-template-areas: "image info" "image subtotal";
   }
 
   .cart-item__image {
@@ -1935,9 +2021,9 @@ textarea {
     grid-template-columns: 1fr;
   }
 
-.checkout-grid {
-  grid-template-columns: 1fr;
-}
+  .checkout-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .link-button {

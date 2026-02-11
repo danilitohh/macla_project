@@ -1,5 +1,6 @@
 import { request } from './apiClient'
 import type { Announcement, Product, Review } from '../types'
+import type { DiscountCode } from '../types'
 
 export const getProducts = async (): Promise<Product[]> => {
   const result = await request<{ products: Product[] }>('/products', { method: 'GET' })
@@ -49,6 +50,23 @@ export const deleteAdminProduct = async (id: string): Promise<void> => {
 export const getAdminAnnouncements = async (): Promise<Announcement[]> => {
   const result = await request<{ announcements: Announcement[] }>('/admin/announcements', { method: 'GET' })
   return Array.isArray(result.announcements) ? result.announcements : []
+}
+
+export const getAdminDiscounts = async (): Promise<DiscountCode[]> => {
+  const result = await request<{ discounts: DiscountCode[] }>('/admin/discounts', { method: 'GET' })
+  return Array.isArray(result.discounts) ? result.discounts : []
+}
+
+export const upsertAdminDiscount = async (payload: DiscountCode): Promise<DiscountCode> => {
+  const result = await request<{ discount: DiscountCode }>('/admin/discounts', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+  return result.discount
+}
+
+export const deleteAdminDiscount = async (code: string): Promise<void> => {
+  await request<void>(`/admin/discounts/${encodeURIComponent(code)}`, { method: 'DELETE' })
 }
 
 export const getAdminReviews = async (productId: string): Promise<Review[]> => {

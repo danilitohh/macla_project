@@ -1,159 +1,199 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { FormEvent, ChangeEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { useCart } from '../hooks/useCart'
-import { formatCurrency } from '../utils/format'
-import { paymentMethods, shippingOptions } from '../data/config'
-import { submitOrder, validateDiscount, getUserOrders } from '../services/orderService'
-import { createAddress, getAddresses } from '../services/addressService'
-import type { OrderPayload, OrderCustomer, OrderSummary, OrderItemSummary, Address } from '../types'
-import { trackEvent } from '../utils/analytics'
-import { useAuth } from '../hooks/useAuth'
-import { getWompiConfig, getWompiSignature, verifyWompiTransaction } from '../services/paymentService'
-import { loadScript } from '../utils/loadScript'
-import { clearWompiIntent, getWompiIntent, saveWompiIntent } from '../utils/wompiSession'
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent, ChangeEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useCart } from "../hooks/useCart";
+import { formatCurrency } from "../utils/format";
+import { paymentMethods, shippingOptions } from "../data/config";
+import {
+  submitOrder,
+  validateDiscount,
+  getUserOrders,
+} from "../services/orderService";
+import { createAddress, getAddresses } from "../services/addressService";
+import type {
+  OrderPayload,
+  OrderCustomer,
+  OrderSummary,
+  OrderItemSummary,
+  Address,
+} from "../types";
+import { trackEvent } from "../utils/analytics";
+import { useAuth } from "../hooks/useAuth";
+import {
+  getWompiConfig,
+  getWompiSignature,
+  verifyWompiTransaction,
+} from "../services/paymentService";
+import { loadScript } from "../utils/loadScript";
+import {
+  clearWompiIntent,
+  getWompiIntent,
+  saveWompiIntent,
+} from "../utils/wompiSession";
 
 declare global {
   interface Window {
-    WidgetCheckout?: any
+    WidgetCheckout?: any;
   }
 }
 
 const CheckoutPage = () => {
-  const { items, subtotal, clearCart } = useCart()
-  const { user, isAuthenticated, isLoading } = useAuth()
-  const navigate = useNavigate()
-  const [shippingId, setShippingId] = useState<string>('medellin')
-  const [paymentId, setPaymentId] = useState<string>('contraentrega')
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [submittedOrder, setSubmittedOrder] = useState<OrderSummary | null>(null)
-  const [submitError, setSubmitError] = useState<string | null>(null)
-  const [addresses, setAddresses] = useState<Address[]>([])
-  const [addressesLoading, setAddressesLoading] = useState(false)
-  const [addressesError, setAddressesError] = useState<string | null>(null)
-  const [selectedAddressId, setSelectedAddressId] = useState<number | null>(null)
+  const { items, subtotal, clearCart } = useCart();
+  const { user, isAuthenticated, isLoading } = useAuth();
+  const navigate = useNavigate();
+  const [shippingId, setShippingId] = useState<string>("medellin");
+  const [paymentId, setPaymentId] = useState<string>("contraentrega");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittedOrder, setSubmittedOrder] = useState<OrderSummary | null>(
+    null,
+  );
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [addressesLoading, setAddressesLoading] = useState(false);
+  const [addressesError, setAddressesError] = useState<string | null>(null);
+  const [selectedAddressId, setSelectedAddressId] = useState<number | null>(
+    null,
+  );
   const [formValues, setFormValues] = useState<OrderCustomer>({
-    name: user?.name ?? '',
-    email: user?.email ?? '',
-    phone: user?.phone ?? '',
-    city: user?.city ?? '',
-    address: user?.address ?? '',
-    notes: ''
-  })
-  const [saveAddress, setSaveAddress] = useState(false)
-  const [addressLabel, setAddressLabel] = useState('Casa')
-  const [discountCode, setDiscountCode] = useState('')
+    name: user?.name ?? "",
+    email: user?.email ?? "",
+    phone: user?.phone ?? "",
+    city: user?.city ?? "",
+    address: user?.address ?? "",
+    notes: "",
+  });
+  const [saveAddress, setSaveAddress] = useState(false);
+  const [addressLabel, setAddressLabel] = useState("Casa");
+  const [discountCode, setDiscountCode] = useState("");
   const [appliedDiscount, setAppliedDiscount] = useState<{
-    code: string
-    discount: number
-    breakdown: { products: number; shipping: number }
-  } | null>(null)
-  const [discountMessage, setDiscountMessage] = useState<string | null>(null)
-  const [discountError, setDiscountError] = useState<string | null>(null)
-  const [validatingDiscount, setValidatingDiscount] = useState(false)
-  const [wompiStatus, setWompiStatus] = useState<'idle' | 'ready' | 'processing' | 'paid' | 'error'>('idle')
-  const [wompiError, setWompiError] = useState<string | null>(null)
-  const cachedWompiIntent = useMemo(() => getWompiIntent(), [])
+    code: string;
+    discount: number;
+    breakdown: { products: number; shipping: number };
+  } | null>(null);
+  const [discountMessage, setDiscountMessage] = useState<string | null>(null);
+  const [discountError, setDiscountError] = useState<string | null>(null);
+  const [validatingDiscount, setValidatingDiscount] = useState(false);
+  const [wompiStatus, setWompiStatus] = useState<
+    "idle" | "ready" | "processing" | "paid" | "error"
+  >("idle");
+  const [wompiError, setWompiError] = useState<string | null>(null);
+  const cachedWompiIntent = useMemo(() => getWompiIntent(), []);
 
   useEffect(() => {
-    if (paymentId === 'pasarela' || submittedOrder?.paymentMethod?.id === 'pasarela') {
-      loadScript('https://checkout.wompi.co/widget.js').catch((err) =>
-        console.warn('[Wompi] No pudimos precargar el widget', err)
-      )
+    if (
+      paymentId === "pasarela" ||
+      submittedOrder?.paymentMethod?.id === "pasarela"
+    ) {
+      loadScript("https://checkout.wompi.co/widget.js").catch((err) =>
+        console.warn("[Wompi] No pudimos precargar el widget", err),
+      );
     }
-  }, [paymentId, submittedOrder])
+  }, [paymentId, submittedOrder]);
 
   // Si recargamos la página después de crear el pedido, intenta restaurarlo desde el servidor
   useEffect(() => {
-    if (submittedOrder || !isAuthenticated) return
+    // Si hay items en el carrito, priorizamos crear un nuevo pedido en lugar de restaurar uno antiguo
+    if (items.length > 0) return;
+    if (submittedOrder || !isAuthenticated) return;
 
-    let ignore = false
+    let ignore = false;
     const restore = async () => {
       try {
-        const orders = await getUserOrders()
-        const match =
-          cachedWompiIntent?.orderCode
-            ? orders.find((order) => order.code === cachedWompiIntent.orderCode) || orders[0]
-            : orders[0]
+        const orders = await getUserOrders();
+        const match = cachedWompiIntent?.orderCode
+          ? orders.find(
+              (order) => order.code === cachedWompiIntent.orderCode,
+            ) || orders[0]
+          : orders[0];
         if (!ignore && match) {
-          setSubmittedOrder(match)
+          setSubmittedOrder(match);
           if (match.paymentMethod?.id) {
-            setPaymentId(match.paymentMethod.id)
+            setPaymentId(match.paymentMethod.id);
           }
         }
       } catch (error) {
-        console.error('[checkout] No pudimos restaurar el pedido tras recarga', error)
+        console.error(
+          "[checkout] No pudimos restaurar el pedido tras recarga",
+          error,
+        );
       }
-    }
+    };
 
-    restore()
+    restore();
 
     return () => {
-      ignore = true
-    }
-  }, [submittedOrder, isAuthenticated, cachedWompiIntent])
+      ignore = true;
+    };
+  }, [submittedOrder, isAuthenticated, cachedWompiIntent]);
 
   useEffect(() => {
-    if (!user) return
+    if (!user) return;
     setFormValues((prev) => ({
       ...prev,
       name: user.name || prev.name,
       email: user.email || prev.email,
       phone: user.phone ?? prev.phone,
       city: user.city ?? prev.city,
-      address: user.address ?? prev.address
-    }))
-  }, [user])
+      address: user.address ?? prev.address,
+    }));
+  }, [user]);
 
   useEffect(() => {
-    let isMounted = true
-    setAddressesLoading(true)
-    setAddressesError(null)
+    let isMounted = true;
+    setAddressesLoading(true);
+    setAddressesError(null);
     getAddresses()
       .then((list) => {
-        if (!isMounted) return
-        setAddresses(list)
+        if (!isMounted) return;
+        setAddresses(list);
       })
       .catch((err) => {
-        console.error(err)
+        console.error(err);
         if (isMounted) {
-          setAddressesError('No pudimos cargar tus direcciones guardadas.')
+          setAddressesError("No pudimos cargar tus direcciones guardadas.");
         }
       })
       .finally(() => {
         if (isMounted) {
-          setAddressesLoading(false)
+          setAddressesLoading(false);
         }
-      })
+      });
 
     return () => {
-      isMounted = false
-    }
-  }, [])
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (addresses.length === 0 || selectedAddressId) {
-      return
+      return;
     }
-    const preferred = addresses.find((addr) => addr.isDefaultShipping) || addresses[0]
+    const preferred =
+      addresses.find((addr) => addr.isDefaultShipping) || addresses[0];
     if (preferred) {
-      setSelectedAddressId(preferred.id)
+      setSelectedAddressId(preferred.id);
       setFormValues((prev) => ({
         ...prev,
         name: prev.name || preferred.contactName,
         phone: preferred.contactPhone,
         city: preferred.city,
-        address: preferred.address
-      }))
+        address: preferred.address,
+      }));
     }
-  }, [addresses, selectedAddressId])
+  }, [addresses, selectedAddressId]);
 
-  const shipping = useMemo(() => shippingOptions.find((option) => option.id === shippingId), [shippingId])
-  const payment = useMemo(() => paymentMethods.find((method) => method.id === paymentId), [paymentId])
-  const shippingDiscount = appliedDiscount?.breakdown.shipping ?? 0
-  const productDiscount = appliedDiscount?.breakdown.products ?? 0
-  const shippingCost = Math.max(0, (shipping?.price ?? 0) - shippingDiscount)
-  const total = Math.max(0, subtotal - productDiscount + shippingCost)
+  const shipping = useMemo(
+    () => shippingOptions.find((option) => option.id === shippingId),
+    [shippingId],
+  );
+  const payment = useMemo(
+    () => paymentMethods.find((method) => method.id === paymentId),
+    [paymentId],
+  );
+  const shippingDiscount = appliedDiscount?.breakdown.shipping ?? 0;
+  const productDiscount = appliedDiscount?.breakdown.products ?? 0;
+  const shippingCost = Math.max(0, (shipping?.price ?? 0) - shippingDiscount);
+  const total = Math.max(0, subtotal - productDiscount + shippingCost);
   const pendingSummaryItems: OrderItemSummary[] = useMemo(
     () =>
       items.map((item) => ({
@@ -161,68 +201,72 @@ const CheckoutPage = () => {
           id: item.product.id,
           name: item.product.name,
           price: item.product.price,
-          currency: item.product.currency
+          currency: item.product.currency,
         },
         quantity: item.quantity,
         unitPrice: item.product.price,
-        lineTotal: item.product.price * item.quantity
+        lineTotal: item.product.price * item.quantity,
       })),
-    [items]
-  )
+    [items],
+  );
 
-  const handleInputChange = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = event.currentTarget
-    setFormValues((prev) => ({ ...prev, [name]: value }))
-  }
+  const handleInputChange = (
+    event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
+    const { name, value } = event.currentTarget;
+    setFormValues((prev) => ({ ...prev, [name]: value }));
+  };
 
   const startWompiCheckout = async (order: OrderSummary) => {
     try {
-      setWompiStatus('processing')
-      setWompiError(null)
-      const config = await getWompiConfig()
+      setWompiStatus("processing");
+      setWompiError(null);
+      const config = await getWompiConfig();
       if (!config.configured || !config.publicKey) {
-        throw new Error(config.message || 'Wompi no está configurado en el servidor.')
+        throw new Error(
+          config.message || "Wompi no está configurado en el servidor.",
+        );
       }
-      await loadScript('https://checkout.wompi.co/widget.js')
+      await loadScript("https://checkout.wompi.co/widget.js");
 
-      let redirectUrl = config.redirectUrl
+      let redirectUrl = config.redirectUrl;
       try {
-        const url = new URL(config.redirectUrl)
-        url.searchParams.set('order', order.code)
-        redirectUrl = url.toString()
+        const url = new URL(config.redirectUrl);
+        url.searchParams.set("order", order.code);
+        redirectUrl = url.toString();
       } catch (_err) {
-        const separator = config.redirectUrl.includes('?') ? '&' : '?'
-        redirectUrl = `${config.redirectUrl}${separator}order=${encodeURIComponent(order.code)}`
+        const separator = config.redirectUrl.includes("?") ? "&" : "?";
+        redirectUrl = `${config.redirectUrl}${separator}order=${encodeURIComponent(order.code)}`;
       }
 
-      const phoneDigits = String(formValues.phone || '')
-        .replace(/[^\d]/g, '')
-        .slice(-12)
-      const defaultLocal = '3000000000'
-      let phoneNumberPrefix = '57'
-      let phoneNumber = phoneDigits || defaultLocal
-      if (phoneDigits.startsWith('57') && phoneDigits.length > 8) {
-        phoneNumberPrefix = '57'
-        phoneNumber = phoneDigits.slice(2)
-      } else if (phoneDigits.startsWith('52') && phoneDigits.length > 8) {
-        phoneNumberPrefix = '52'
-        phoneNumber = phoneDigits.slice(2)
-      } else if (phoneDigits.startsWith('1') && phoneDigits.length === 11) {
-        phoneNumberPrefix = '1'
-        phoneNumber = phoneDigits.slice(1)
+      const phoneDigits = String(formValues.phone || "")
+        .replace(/[^\d]/g, "")
+        .slice(-12);
+      const defaultLocal = "3000000000";
+      let phoneNumberPrefix = "57";
+      let phoneNumber = phoneDigits || defaultLocal;
+      if (phoneDigits.startsWith("57") && phoneDigits.length > 8) {
+        phoneNumberPrefix = "57";
+        phoneNumber = phoneDigits.slice(2);
+      } else if (phoneDigits.startsWith("52") && phoneDigits.length > 8) {
+        phoneNumberPrefix = "52";
+        phoneNumber = phoneDigits.slice(2);
+      } else if (phoneDigits.startsWith("1") && phoneDigits.length === 11) {
+        phoneNumberPrefix = "1";
+        phoneNumber = phoneDigits.slice(1);
       }
 
-      let signature = null
-      let amountFromSignature = null
+      let signature = null;
+      let amountFromSignature = null;
       try {
-        const sig = await getWompiSignature({ orderCode: order.code })
-        signature = sig.signature
-        amountFromSignature = sig.amountInCents
+        const sig = await getWompiSignature({ orderCode: order.code });
+        signature = sig.signature;
+        amountFromSignature = sig.amountInCents;
       } catch (err) {
-        console.warn('[Wompi] No pudimos generar la firma de integridad', err)
+        console.warn("[Wompi] No pudimos generar la firma de integridad", err);
       }
 
-      const amountInCents = Math.max(0, Math.round(order.total)) * 100
+      const amountInCents = Math.max(0, Math.round(order.total)) * 100;
       const baseWidgetConfig = {
         currency: order.currency,
         amountInCents: amountFromSignature ?? amountInCents,
@@ -233,119 +277,131 @@ const CheckoutPage = () => {
           email: formValues.email,
           fullName: formValues.name,
           phoneNumber,
-          phoneNumberPrefix
-        }
-      }
+          phoneNumberPrefix,
+        },
+      };
 
-      let widget: any
+      let widget: any;
       try {
         widget = new window.WidgetCheckout({
           ...baseWidgetConfig,
-          signature: signature ? { integrity: signature } : undefined
-        })
+          signature: signature ? { integrity: signature } : undefined,
+        });
       } catch (err) {
-        console.warn('[Wompi] Error con la firma, reintentando sin signature', err)
-        widget = new window.WidgetCheckout({ ...baseWidgetConfig })
+        console.warn(
+          "[Wompi] Error con la firma, reintentando sin signature",
+          err,
+        );
+        widget = new window.WidgetCheckout({ ...baseWidgetConfig });
       }
 
       saveWompiIntent({
         orderCode: order.code,
         total: order.total,
         currency: order.currency,
-        createdAt: new Date().toISOString()
-      })
+        createdAt: new Date().toISOString(),
+      });
 
-      setWompiStatus('ready')
+      setWompiStatus("ready");
       widget.open((result: any) => {
-        const transactionId = result?.transaction?.id
+        const transactionId = result?.transaction?.id;
         if (transactionId) {
-          setWompiStatus('processing')
+          setWompiStatus("processing");
           verifyWompiTransaction({ transactionId, orderCode: order.code })
             .then((res) => {
-              setWompiStatus(res.status === 'paid' ? 'paid' : 'ready')
-              if (res.status === 'paid') {
-                clearWompiIntent()
-                setSubmittedOrder((prev) => (prev ? { ...prev, status: 'paid' } : prev))
+              setWompiStatus(res.status === "paid" ? "paid" : "ready");
+              if (res.status === "paid") {
+                clearWompiIntent();
+                setSubmittedOrder((prev) =>
+                  prev ? { ...prev, status: "paid" } : prev,
+                );
               }
             })
             .catch((err) => {
-              console.error('[Wompi] No se pudo confirmar el pago', err)
-              setWompiStatus('error')
-              setWompiError('No pudimos confirmar el pago. Verifica en tu banco o intenta nuevamente.')
-            })
+              console.error("[Wompi] No se pudo confirmar el pago", err);
+              setWompiStatus("error");
+              setWompiError(
+                "No pudimos confirmar el pago. Verifica en tu banco o intenta nuevamente.",
+              );
+            });
         }
-      })
+      });
     } catch (error) {
-      console.error('[Wompi] Error iniciando checkout', error)
-      setWompiStatus('error')
-      const fallback = error instanceof Error ? error.message : null
-      setWompiError(fallback || 'No pudimos abrir el checkout de Wompi. Intenta nuevamente.')
+      console.error("[Wompi] Error iniciando checkout", error);
+      setWompiStatus("error");
+      const fallback = error instanceof Error ? error.message : null;
+      setWompiError(
+        fallback ||
+          "No pudimos abrir el checkout de Wompi. Intenta nuevamente.",
+      );
     }
-  }
+  };
 
   const handleAddressSelect = (address: Address) => {
-    setSelectedAddressId(address.id)
+    setSelectedAddressId(address.id);
     setFormValues((prev) => ({
       ...prev,
       name: prev.name || address.contactName,
       phone: address.contactPhone,
       city: address.city,
       address: address.address,
-      notes: prev.notes
-    }))
-  }
+      notes: prev.notes,
+    }));
+  };
 
   const handleApplyDiscount = async (providedCode?: string) => {
-    const codeToApply = (providedCode ?? discountCode).trim()
+    const codeToApply = (providedCode ?? discountCode).trim();
     if (!codeToApply) {
-      setDiscountError('Ingresa un código para aplicarlo.')
-      setDiscountMessage(null)
-      return
+      setDiscountError("Ingresa un código para aplicarlo.");
+      setDiscountMessage(null);
+      return;
     }
-    setValidatingDiscount(true)
-    setDiscountError(null)
+    setValidatingDiscount(true);
+    setDiscountError(null);
     try {
       const result = await validateDiscount({
         code: codeToApply,
         subtotalCents: subtotal,
-        shippingCents: shipping?.price ?? 0
-      })
+        shippingCents: shipping?.price ?? 0,
+      });
       setAppliedDiscount({
         code: result.code,
         discount: result.discount,
-        breakdown: result.breakdown
-      })
-      setDiscountMessage(`Código aplicado: ${result.code}`)
+        breakdown: result.breakdown,
+      });
+      setDiscountMessage(`Código aplicado: ${result.code}`);
     } catch (err) {
-      console.error(err)
-      setAppliedDiscount(null)
+      console.error(err);
+      setAppliedDiscount(null);
       if (err instanceof Error) {
-        setDiscountError(err.message)
+        setDiscountError(err.message);
       } else {
-        setDiscountError('No pudimos validar este código.')
+        setDiscountError("No pudimos validar este código.");
       }
     } finally {
-      setValidatingDiscount(false)
+      setValidatingDiscount(false);
     }
-  }
+  };
 
   useEffect(() => {
     if (!appliedDiscount?.code) {
-      return
+      return;
     }
-    handleApplyDiscount(appliedDiscount.code).catch((err) => console.error('[discount] revalidate', err))
+    handleApplyDiscount(appliedDiscount.code).catch((err) =>
+      console.error("[discount] revalidate", err),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shippingId, subtotal])
+  }, [shippingId, subtotal]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+    event.preventDefault();
     if (items.length === 0) {
-      navigate('/productos')
-      return
+      navigate("/productos");
+      return;
     }
 
-    setIsSubmitting(true)
-    setSubmitError(null)
+    setIsSubmitting(true);
+    setSubmitError(null);
 
     const trimmedCustomer: OrderCustomer = {
       name: formValues.name.trim(),
@@ -353,36 +409,37 @@ const CheckoutPage = () => {
       phone: formValues.phone.trim(),
       city: formValues.city.trim(),
       address: formValues.address.trim(),
-      notes: formValues.notes?.trim() || undefined
-    }
+      notes: formValues.notes?.trim() || undefined,
+    };
 
     const orderData: OrderPayload = {
       customer: trimmedCustomer,
       paymentMethodId: payment?.id ?? null,
       shippingOptionId: shipping?.id ?? null,
       addressId: selectedAddressId,
-      discountCode: appliedDiscount?.code || (discountCode ? discountCode.trim() : null),
-      items
-    }
+      discountCode:
+        appliedDiscount?.code || (discountCode ? discountCode.trim() : null),
+      items,
+    };
 
     try {
-      const order = await submitOrder(orderData)
-      setSubmittedOrder(order)
-      clearCart()
-      if (payment?.id === 'pasarela') {
-        startWompiCheckout(order)
+      const order = await submitOrder(orderData);
+      setSubmittedOrder(order);
+      clearCart();
+      if (payment?.id === "pasarela") {
+        startWompiCheckout(order);
       }
       if (saveAddress) {
         createAddress({
-          label: addressLabel || 'Mi dirección',
+          label: addressLabel || "Mi dirección",
           contactName: trimmedCustomer.name,
           contactPhone: trimmedCustomer.phone,
           city: trimmedCustomer.city,
           address: trimmedCustomer.address,
-          notes: trimmedCustomer.notes
-        }).then((newAddress) => setAddresses((prev) => [newAddress, ...prev]))
+          notes: trimmedCustomer.notes,
+        }).then((newAddress) => setAddresses((prev) => [newAddress, ...prev]));
       }
-      trackEvent('purchase', {
+      trackEvent("purchase", {
         transaction_id: order.code,
         value: order.total,
         currency: order.currency,
@@ -391,16 +448,18 @@ const CheckoutPage = () => {
           item_id: item.product.id,
           item_name: item.product.name,
           price: item.unitPrice,
-          quantity: item.quantity
-        }))
-      })
+          quantity: item.quantity,
+        })),
+      });
     } catch (error) {
-      console.error(error)
-      setSubmitError('No pudimos registrar tu pedido. Intenta nuevamente o contáctanos por WhatsApp.')
+      console.error(error);
+      setSubmitError(
+        "No pudimos registrar tu pedido. Intenta nuevamente o contáctanos por WhatsApp.",
+      );
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
-  }
+  };
 
   if (isLoading) {
     return (
@@ -412,7 +471,7 @@ const CheckoutPage = () => {
           </div>
         </section>
       </div>
-    )
+    );
   }
 
   if (!isAuthenticated) {
@@ -422,8 +481,8 @@ const CheckoutPage = () => {
           <div className="container">
             <h1>Necesitas una cuenta para continuar</h1>
             <p>
-              Inicia sesión o crea tu cuenta gratis para guardar tus datos de envío, mantener tu carrito y hacer
-              seguimiento a tus pedidos.
+              Inicia sesión o crea tu cuenta gratis para guardar tus datos de
+              envío, mantener tu carrito y hacer seguimiento a tus pedidos.
             </p>
             <Link to="/cuenta" className="btn btn--primary">
               Ir a mi cuenta
@@ -431,7 +490,7 @@ const CheckoutPage = () => {
           </div>
         </section>
       </div>
-    )
+    );
   }
 
   if (items.length === 0 && !submittedOrder) {
@@ -440,20 +499,32 @@ const CheckoutPage = () => {
         <section className="section">
           <div className="container">
             <h1>Aún no tienes productos en el carrito</h1>
-            <button type="button" className="btn btn--primary" onClick={() => navigate('/productos')}>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => navigate("/productos")}
+            >
               Ir al catálogo
             </button>
           </div>
         </section>
       </div>
-    )
+    );
   }
 
-  const summaryItems = submittedOrder ? submittedOrder.items : pendingSummaryItems
-  const summarySubtotal = submittedOrder ? submittedOrder.subtotal : subtotal
-  const summaryShipping = submittedOrder ? submittedOrder.shippingCost : shippingCost
-  const summaryDiscount = submittedOrder ? submittedOrder.discount ?? 0 : appliedDiscount?.discount ?? 0
-  const summaryTotal = submittedOrder ? submittedOrder.total : Math.max(0, summarySubtotal - summaryDiscount + summaryShipping)
+  const summaryItems = submittedOrder
+    ? submittedOrder.items
+    : pendingSummaryItems;
+  const summarySubtotal = submittedOrder ? submittedOrder.subtotal : subtotal;
+  const summaryShipping = submittedOrder
+    ? submittedOrder.shippingCost
+    : shippingCost;
+  const summaryDiscount = submittedOrder
+    ? (submittedOrder.discount ?? 0)
+    : (appliedDiscount?.discount ?? 0);
+  const summaryTotal = submittedOrder
+    ? submittedOrder.total
+    : Math.max(0, summarySubtotal - summaryDiscount + summaryShipping);
 
   return (
     <div className="page">
@@ -461,8 +532,9 @@ const CheckoutPage = () => {
         <div className="container">
           <h1>Checkout</h1>
           <p>
-            Completa tus datos para coordinar el envío y elegir la forma de pago. Nuestro equipo te contactará para
-            confirmar detalles y finalizar el pedido.
+            Completa tus datos para coordinar el envío y elegir la forma de
+            pago. Nuestro equipo te contactará para confirmar detalles y
+            finalizar el pedido.
           </p>
         </div>
       </section>
@@ -472,45 +544,58 @@ const CheckoutPage = () => {
             <div className="order-success">
               <h2>¡Gracias! Tu pedido está en proceso.</h2>
               <p>
-                Nuestro equipo se comunicará contigo en las próximas horas para confirmar disponibilidad y pago.
-                Anota tu código de seguimiento:
+                Nuestro equipo se comunicará contigo en las próximas horas para
+                confirmar disponibilidad y pago. Anota tu código de seguimiento:
               </p>
               <div className="order-success__code">{submittedOrder.code}</div>
               <p className="muted">
-                Método de pago elegido:{' '}
-                {submittedOrder.paymentMethod?.label ?? 'A convenir con nuestro equipo comercial.'}
+                Método de pago elegido:{" "}
+                {submittedOrder.paymentMethod?.label ??
+                  "A convenir con nuestro equipo comercial."}
               </p>
               <p className="muted">
-                Modalidad de envío:{' '}
-                {submittedOrder.shippingOption?.label ?? 'Definiremos los detalles de entrega contigo.'}
+                Modalidad de envío:{" "}
+                {submittedOrder.shippingOption?.label ??
+                  "Definiremos los detalles de entrega contigo."}
               </p>
-              {submittedOrder.paymentMethod?.id === 'pasarela' && (
+              {submittedOrder.paymentMethod?.id === "pasarela" && (
                 <div className="payment-box">
                   <p>
-                    Completa tu pago con Wompi para marcar el pedido como pagado. Si ya pagaste, intentaremos verificar
+                    Completa tu pago con Wompi para marcar el pedido como
+                    pagado. Si ya pagaste, intentaremos verificar
                     automáticamente.
                   </p>
-                  {wompiStatus !== 'paid' && (
+                  {wompiStatus !== "paid" && (
                     <button
                       type="button"
                       className="btn btn--primary"
                       onClick={() => startWompiCheckout(submittedOrder)}
-                      disabled={wompiStatus === 'processing'}
+                      disabled={wompiStatus === "processing"}
                     >
-                      {wompiStatus === 'processing' ? 'Abriendo Wompi…' : 'Pagar con Wompi'}
+                      {wompiStatus === "processing"
+                        ? "Abriendo Wompi…"
+                        : "Pagar con Wompi"}
                     </button>
                   )}
-                  {wompiStatus === 'paid' && <p className="muted">Pago confirmado. ¡Gracias!</p>}
+                  {wompiStatus === "paid" && (
+                    <p className="muted">Pago confirmado. ¡Gracias!</p>
+                  )}
                   {wompiError && <p className="error">{wompiError}</p>}
                 </div>
               )}
               {submittedOrder.discount > 0 && (
                 <p className="muted">
                   Descuento aplicado: -{formatCurrency(submittedOrder.discount)}
-                  {submittedOrder.discountCode ? ` (${submittedOrder.discountCode})` : ''}
+                  {submittedOrder.discountCode
+                    ? ` (${submittedOrder.discountCode})`
+                    : ""}
                 </p>
               )}
-              <button type="button" className="btn btn--primary" onClick={() => navigate('/productos')}>
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => navigate("/productos")}
+              >
                 Seguir explorando productos
               </button>
             </div>
@@ -526,7 +611,11 @@ const CheckoutPage = () => {
                   {addresses.map((address) => (
                     <label
                       key={address.id}
-                      className={selectedAddressId === address.id ? 'option is-selected' : 'option'}
+                      className={
+                        selectedAddressId === address.id
+                          ? "option is-selected"
+                          : "option"
+                      }
                     >
                       <input
                         type="radio"
@@ -541,7 +630,8 @@ const CheckoutPage = () => {
                           {address.city} · {address.address}
                         </p>
                         <p className="muted">
-                          Contacto: {address.contactName} · {address.contactPhone}
+                          Contacto: {address.contactName} ·{" "}
+                          {address.contactPhone}
                         </p>
                       </div>
                     </label>
@@ -620,9 +710,13 @@ const CheckoutPage = () => {
                   <input
                     type="checkbox"
                     checked={saveAddress}
-                    onChange={(event) => setSaveAddress(event.currentTarget.checked)}
+                    onChange={(event) =>
+                      setSaveAddress(event.currentTarget.checked)
+                    }
                   />
-                  <span>Guardar esta información como una dirección frecuente.</span>
+                  <span>
+                    Guardar esta información como una dirección frecuente.
+                  </span>
                 </label>
                 {saveAddress && (
                   <label className="form-grid--full">
@@ -630,7 +724,9 @@ const CheckoutPage = () => {
                     <input
                       type="text"
                       value={addressLabel}
-                      onChange={(event) => setAddressLabel(event.currentTarget.value)}
+                      onChange={(event) =>
+                        setAddressLabel(event.currentTarget.value)
+                      }
                       placeholder="Casa, Oficina, Bodega…"
                     />
                   </label>
@@ -640,7 +736,12 @@ const CheckoutPage = () => {
               <h2>Envío</h2>
               <div className="option-list">
                 {shippingOptions.map((option) => (
-                  <label key={option.id} className={shippingId === option.id ? 'option is-selected' : 'option'}>
+                  <label
+                    key={option.id}
+                    className={
+                      shippingId === option.id ? "option is-selected" : "option"
+                    }
+                  >
                     <input
                       type="radio"
                       name="shippingId"
@@ -653,7 +754,9 @@ const CheckoutPage = () => {
                       <p>{option.description}</p>
                     </div>
                     <span>
-                      {option.price > 0 ? formatCurrency(option.price) : 'A convenir'}
+                      {option.price > 0
+                        ? formatCurrency(option.price)
+                        : "A convenir"}
                     </span>
                   </label>
                 ))}
@@ -662,7 +765,12 @@ const CheckoutPage = () => {
               <h2>Método de pago</h2>
               <div className="option-list">
                 {paymentMethods.map((method) => (
-                  <label key={method.id} className={paymentId === method.id ? 'option is-selected' : 'option'}>
+                  <label
+                    key={method.id}
+                    className={
+                      paymentId === method.id ? "option is-selected" : "option"
+                    }
+                  >
                     <input
                       type="radio"
                       name="paymentId"
@@ -680,13 +788,17 @@ const CheckoutPage = () => {
 
               <h2>Descuentos</h2>
               <div className="checkout-coupon">
-                <label htmlFor="discountCode">¿Tienes un código de descuento?</label>
+                <label htmlFor="discountCode">
+                  ¿Tienes un código de descuento?
+                </label>
                 <div className="checkout-coupon__controls">
                   <input
                     id="discountCode"
                     type="text"
                     value={discountCode}
-                    onChange={(event) => setDiscountCode(event.currentTarget.value)}
+                    onChange={(event) =>
+                      setDiscountCode(event.currentTarget.value)
+                    }
                     placeholder="MACLA10, ENVIOFREE…"
                   />
                   <button
@@ -695,10 +807,12 @@ const CheckoutPage = () => {
                     onClick={() => handleApplyDiscount()}
                     disabled={validatingDiscount}
                   >
-                    {validatingDiscount ? 'Validando…' : 'Aplicar'}
+                    {validatingDiscount ? "Validando…" : "Aplicar"}
                   </button>
                 </div>
-                {discountMessage && <p className="form-success">{discountMessage}</p>}
+                {discountMessage && (
+                  <p className="form-success">{discountMessage}</p>
+                )}
                 {discountError && <p className="form-error">{discountError}</p>}
               </div>
 
@@ -709,7 +823,9 @@ const CheckoutPage = () => {
                 </div>
                 <div>
                   <span>Envío</span>
-                  <strong>{shippingCost ? formatCurrency(shippingCost) : 'A convenir'}</strong>
+                  <strong>
+                    {shippingCost ? formatCurrency(shippingCost) : "A convenir"}
+                  </strong>
                 </div>
                 {summaryDiscount > 0 && (
                   <div>
@@ -722,8 +838,12 @@ const CheckoutPage = () => {
                   <strong>{formatCurrency(total)}</strong>
                 </div>
                 {submitError && <p className="form-error">{submitError}</p>}
-                <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
-                  {isSubmitting ? 'Generando pedido…' : 'Confirmar pedido'}
+                <button
+                  type="submit"
+                  className="btn btn--primary"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? "Generando pedido…" : "Confirmar pedido"}
                 </button>
               </div>
             </form>
@@ -738,15 +858,20 @@ const CheckoutPage = () => {
                 <ul className="checkout-items">
                   {summaryItems.map((item) => {
                     const coverImage =
-                      (Array.isArray((item.product as any).images) && (item.product as any).images[0]) ||
+                      (Array.isArray((item.product as any).images) &&
+                        (item.product as any).images[0]) ||
                       (item.product as any).imageUrl ||
                       (item.product as any).image ||
-                      '/plancha.png'
+                      "/plancha.png";
 
                     return (
                       <li key={item.product.id}>
                         <div className="checkout-item__thumb">
-                          <img src={coverImage} alt={item.product.name} loading="lazy" />
+                          <img
+                            src={coverImage}
+                            alt={item.product.name}
+                            loading="lazy"
+                          />
                         </div>
                         <div>
                           <strong>{item.product.name}</strong>
@@ -756,7 +881,7 @@ const CheckoutPage = () => {
                         </div>
                         <span>{formatCurrency(item.lineTotal)}</span>
                       </li>
-                    )
+                    );
                   })}
                 </ul>
                 <div className="checkout-sidebar__totals">
@@ -767,7 +892,9 @@ const CheckoutPage = () => {
                   <div>
                     <span>Envío</span>
                     <strong>
-                      {summaryShipping ? formatCurrency(summaryShipping) : 'A convenir con nuestro equipo'}
+                      {summaryShipping
+                        ? formatCurrency(summaryShipping)
+                        : "A convenir con nuestro equipo"}
                     </strong>
                   </div>
                   {summaryDiscount > 0 && (
@@ -784,14 +911,15 @@ const CheckoutPage = () => {
               </>
             )}
             <div className="checkout-sidebar__note">
-              Recuerda que nuestras herramientas eléctricas son compatibles con el voltaje colombiano (110V) y las
-              garantías cubren funcionamiento por 3 meses.
+              Recuerda que nuestras herramientas eléctricas son compatibles con
+              el voltaje colombiano (110V) y las garantías cubren funcionamiento
+              por 3 meses.
             </div>
           </aside>
         </div>
       </section>
     </div>
-  )
-}
+  );
+};
 
-export default CheckoutPage
+export default CheckoutPage;

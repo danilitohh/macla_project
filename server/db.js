@@ -1,44 +1,57 @@
-const mysql = require('mysql2/promise')
-const bcrypt = require('bcryptjs')
-const crypto = require('crypto')
-const { categories, products, shippingOptions, paymentMethods, announcements } = require('./seed-data')
+const mysql = require("mysql2/promise");
+const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
+const {
+  categories,
+  products,
+  shippingOptions,
+  paymentMethods,
+  announcements,
+} = require("./seed-data");
 
 const {
-  DB_HOST = 'localhost',
-  DB_PORT = '3306',
-  DB_USER = 'root',
-  DB_PASSWORD = '',
-  DB_NAME = 'macla_store',
-  DB_CONNECTION_LIMIT = '10',
-  SEED_ON_START = 'false'
-} = process.env
-const { ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME = 'Administrador MACLA' } = process.env
+  DB_HOST = "localhost",
+  DB_PORT = "3306",
+  DB_USER = "root",
+  DB_PASSWORD = "",
+  DB_NAME = "macla_store",
+  DB_CONNECTION_LIMIT = "10",
+  SEED_ON_START = "false",
+} = process.env;
+const {
+  ADMIN_EMAIL,
+  ADMIN_PASSWORD,
+  ADMIN_NAME = "Administrador MACLA",
+} = process.env;
 
-const formatDateForSql = (date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ')
+const formatDateForSql = (date = new Date()) =>
+  date.toISOString().slice(0, 19).replace("T", " ");
 
-let pool
+let pool;
 
 const ensurePool = () => {
   if (!pool) {
-    throw new Error('Database pool not initialized. Call initDatabase() first.')
+    throw new Error(
+      "Database pool not initialized. Call initDatabase() first.",
+    );
   }
-  return pool
-}
+  return pool;
+};
 
 const createDatabaseIfNeeded = async () => {
   const connection = await mysql.createConnection({
     host: DB_HOST,
     port: Number(DB_PORT),
     user: DB_USER,
-    password: DB_PASSWORD
-  })
+    password: DB_PASSWORD,
+  });
 
   await connection.query(
-    `CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
-  )
+    `CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+  );
 
-  await connection.end()
-}
+  await connection.end();
+};
 
 const columnExists = async (poolRef, table, column) => {
   const [rows] = await poolRef.query(
@@ -50,10 +63,10 @@ const columnExists = async (poolRef, table, column) => {
         AND COLUMN_NAME = ?
       LIMIT 1
     `,
-    [DB_NAME, table, column]
-  )
-  return rows.length > 0
-}
+    [DB_NAME, table, column],
+  );
+  return rows.length > 0;
+};
 
 const ensureColumnType = async (poolRef, { table, column, type }) => {
   const [rows] = await poolRef.query(
@@ -65,13 +78,17 @@ const ensureColumnType = async (poolRef, { table, column, type }) => {
         AND COLUMN_NAME = ?
       LIMIT 1
     `,
-    [DB_NAME, table, column]
-  )
-  const current = rows[0]?.DATA_TYPE ? String(rows[0].DATA_TYPE).toLowerCase() : null
+    [DB_NAME, table, column],
+  );
+  const current = rows[0]?.DATA_TYPE
+    ? String(rows[0].DATA_TYPE).toLowerCase()
+    : null;
   if (current && current !== type.toLowerCase()) {
-    await poolRef.query(`ALTER TABLE \`${table}\` MODIFY \`${column}\` ${type} NULL`)
+    await poolRef.query(
+      `ALTER TABLE \`${table}\` MODIFY \`${column}\` ${type} NULL`,
+    );
   }
-}
+};
 
 const indexExists = async (poolRef, table, indexName) => {
   const [rows] = await poolRef.query(
@@ -83,10 +100,10 @@ const indexExists = async (poolRef, table, indexName) => {
         AND INDEX_NAME = ?
       LIMIT 1
     `,
-    [DB_NAME, table, indexName]
-  )
-  return rows.length > 0
-}
+    [DB_NAME, table, indexName],
+  );
+  return rows.length > 0;
+};
 
 const constraintExists = async (poolRef, table, constraintName) => {
   const [rows] = await poolRef.query(
@@ -98,13 +115,13 @@ const constraintExists = async (poolRef, table, constraintName) => {
         AND CONSTRAINT_NAME = ?
       LIMIT 1
     `,
-    [DB_NAME, table, constraintName]
-  )
-  return rows.length > 0
-}
+    [DB_NAME, table, constraintName],
+  );
+  return rows.length > 0;
+};
 
 const createSchemaIfNeeded = async () => {
-  const localPool = ensurePool()
+  const localPool = ensurePool();
 
   const schemaStatements = [
     `
@@ -143,6 +160,7 @@ const createSchemaIfNeeded = async () => {
         currency CHAR(3) NOT NULL,
         stock INT UNSIGNED NOT NULL DEFAULT 0,
         is_active TINYINT(1) NOT NULL DEFAULT 1,
+        content_json LONGTEXT NULL,
         created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         CONSTRAINT fk_products_category FOREIGN KEY (category_id) REFERENCES categories(id)
@@ -422,6 +440,20 @@ const createSchemaIfNeeded = async () => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `,
     `
+      CREATE TABLE IF NOT EXISTS discount_codes (
+        code VARCHAR(64) PRIMARY KEY,
+        type ENUM('percent','flat','shipping') NOT NULL DEFAULT 'percent',
+        value_cents INT UNSIGNED NOT NULL DEFAULT 0,
+        percent_value DECIMAL(5,2) NOT NULL DEFAULT 0,
+        min_subtotal_cents INT UNSIGNED NOT NULL DEFAULT 0,
+        max_discount_cents INT UNSIGNED NOT NULL DEFAULT 0,
+        label VARCHAR(255) NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `,
+    `
       CREATE TABLE IF NOT EXISTS invoices (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         order_id BIGINT UNSIGNED NOT NULL UNIQUE,
@@ -478,98 +510,147 @@ const createSchemaIfNeeded = async () => {
         INDEX idx_user_tokens_user (user_id),
         INDEX idx_user_tokens_lookup (user_id, type, expires_at, consumed_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `
-  ]
+    `,
+  ];
 
   for (const statement of schemaStatements) {
     // eslint-disable-next-line no-await-in-loop
-    await localPool.execute(statement)
+    await localPool.execute(statement);
   }
 
-  await ensureSchemaUpgrades(localPool)
-  if (SEED_ON_START === 'true') {
-    await seedInitialData()
+  await ensureSchemaUpgrades(localPool);
+  if (SEED_ON_START === "true") {
+    await seedInitialData();
   }
-}
+};
 
 const ensureSchemaUpgrades = async (localPool) => {
-  if (!(await columnExists(localPool, 'users', 'is_active'))) {
+  if (!(await columnExists(localPool, "users", "is_active"))) {
     await localPool.execute(
-      'ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER password_hash'
-    )
+      "ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER password_hash",
+    );
   }
-  if (!(await columnExists(localPool, 'users', 'role'))) {
+  if (!(await columnExists(localPool, "users", "role"))) {
     await localPool.execute(
-      "ALTER TABLE users ADD COLUMN role ENUM('customer','admin') NOT NULL DEFAULT 'customer' AFTER is_active"
-    )
+      "ALTER TABLE users ADD COLUMN role ENUM('customer','admin') NOT NULL DEFAULT 'customer' AFTER is_active",
+    );
   }
-  if (!(await columnExists(localPool, 'users', 'last_login_at'))) {
-    await localPool.execute('ALTER TABLE users ADD COLUMN last_login_at DATETIME(3) NULL AFTER updated_at')
+  if (!(await columnExists(localPool, "users", "last_login_at"))) {
+    await localPool.execute(
+      "ALTER TABLE users ADD COLUMN last_login_at DATETIME(3) NULL AFTER updated_at",
+    );
   }
-  if (!(await columnExists(localPool, 'users', 'phone'))) {
-    await localPool.execute('ALTER TABLE users ADD COLUMN phone VARCHAR(50) NULL AFTER password_hash')
+  if (!(await columnExists(localPool, "users", "phone"))) {
+    await localPool.execute(
+      "ALTER TABLE users ADD COLUMN phone VARCHAR(50) NULL AFTER password_hash",
+    );
   }
-  if (!(await columnExists(localPool, 'users', 'city'))) {
-    await localPool.execute('ALTER TABLE users ADD COLUMN city VARCHAR(255) NULL AFTER phone')
+  if (!(await columnExists(localPool, "users", "city"))) {
+    await localPool.execute(
+      "ALTER TABLE users ADD COLUMN city VARCHAR(255) NULL AFTER phone",
+    );
   }
-  if (!(await columnExists(localPool, 'users', 'address_line'))) {
-    await localPool.execute('ALTER TABLE users ADD COLUMN address_line TEXT NULL AFTER city')
+  if (!(await columnExists(localPool, "users", "address_line"))) {
+    await localPool.execute(
+      "ALTER TABLE users ADD COLUMN address_line TEXT NULL AFTER city",
+    );
   }
-  if (!(await columnExists(localPool, 'users', 'email_verified_at'))) {
-    await localPool.execute('ALTER TABLE users ADD COLUMN email_verified_at DATETIME(3) NULL AFTER address_line')
+  if (!(await columnExists(localPool, "users", "email_verified_at"))) {
+    await localPool.execute(
+      "ALTER TABLE users ADD COLUMN email_verified_at DATETIME(3) NULL AFTER address_line",
+    );
   }
 
-  if (!(await columnExists(localPool, 'orders', 'cart_id'))) {
-    await localPool.execute('ALTER TABLE orders ADD COLUMN cart_id CHAR(36) NULL AFTER user_id')
-  }
-  if (!(await columnExists(localPool, 'orders', 'currency'))) {
-    await localPool.execute("ALTER TABLE orders ADD COLUMN currency CHAR(3) NOT NULL DEFAULT 'COP' AFTER total_cents")
-  }
-  if (!(await columnExists(localPool, 'orders', 'discount_cents'))) {
-    await localPool.execute(
-      'ALTER TABLE orders ADD COLUMN discount_cents INT UNSIGNED NOT NULL DEFAULT 0 AFTER shipping_cost_cents'
-    )
-  }
-  if (!(await columnExists(localPool, 'orders', 'billing_address_json'))) {
-    await localPool.execute(
-      'ALTER TABLE orders ADD COLUMN billing_address_json LONGTEXT NULL AFTER submitted_at'
-    )
-  }
-  if (!(await columnExists(localPool, 'orders', 'shipping_address_json'))) {
-    await localPool.execute(
-      'ALTER TABLE orders ADD COLUMN shipping_address_json LONGTEXT NULL AFTER billing_address_json'
-    )
-  }
-  if (!(await columnExists(localPool, 'orders', 'metadata_json'))) {
-    await localPool.execute(
-      'ALTER TABLE orders ADD COLUMN metadata_json LONGTEXT NULL AFTER shipping_address_json'
-    )
-  }
-  if (!(await indexExists(localPool, 'orders', 'idx_orders_user'))) {
-    await localPool.execute('CREATE INDEX idx_orders_user ON orders (user_id)')
-  }
-  if (!(await indexExists(localPool, 'orders', 'idx_orders_status'))) {
-    await localPool.execute('CREATE INDEX idx_orders_status ON orders (status)')
-  }
-  if (!(await indexExists(localPool, 'orders', 'idx_orders_submitted_at'))) {
-    await localPool.execute('CREATE INDEX idx_orders_submitted_at ON orders (submitted_at)')
-  }
-  if (!(await constraintExists(localPool, 'orders', 'fk_orders_cart'))) {
-    await localPool.execute(
-      'ALTER TABLE orders ADD CONSTRAINT fk_orders_cart FOREIGN KEY (cart_id) REFERENCES shopping_carts(id) ON UPDATE CASCADE ON DELETE SET NULL'
-    )
+  if (!(await columnExists(localPool, "discount_codes", "code"))) {
+    await localPool.execute(`
+      CREATE TABLE IF NOT EXISTS discount_codes (
+        code VARCHAR(64) PRIMARY KEY,
+        type ENUM('percent','flat','shipping') NOT NULL DEFAULT 'percent',
+        value_cents INT UNSIGNED NOT NULL DEFAULT 0,
+        percent_value DECIMAL(5,2) NOT NULL DEFAULT 0,
+        min_subtotal_cents INT UNSIGNED NOT NULL DEFAULT 0,
+        max_discount_cents INT UNSIGNED NOT NULL DEFAULT 0,
+        label VARCHAR(255) NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
   }
 
-  if (!(await indexExists(localPool, 'order_payments', 'uniq_order_payment_method'))) {
+  if (!(await columnExists(localPool, "products", "content_json"))) {
     await localPool.execute(
-      'ALTER TABLE order_payments ADD UNIQUE KEY uniq_order_payment_method (order_id, payment_method)'
-    )
+      "ALTER TABLE products ADD COLUMN content_json LONGTEXT NULL AFTER is_active",
+    );
   }
 
-  if (!(await columnExists(localPool, 'order_items', 'product_snapshot_json'))) {
+  if (!(await columnExists(localPool, "orders", "cart_id"))) {
     await localPool.execute(
-      'ALTER TABLE order_items ADD COLUMN product_snapshot_json LONGTEXT NULL AFTER line_total_cents'
-    )
+      "ALTER TABLE orders ADD COLUMN cart_id CHAR(36) NULL AFTER user_id",
+    );
+  }
+  if (!(await columnExists(localPool, "orders", "currency"))) {
+    await localPool.execute(
+      "ALTER TABLE orders ADD COLUMN currency CHAR(3) NOT NULL DEFAULT 'COP' AFTER total_cents",
+    );
+  }
+  if (!(await columnExists(localPool, "orders", "discount_cents"))) {
+    await localPool.execute(
+      "ALTER TABLE orders ADD COLUMN discount_cents INT UNSIGNED NOT NULL DEFAULT 0 AFTER shipping_cost_cents",
+    );
+  }
+  if (!(await columnExists(localPool, "orders", "billing_address_json"))) {
+    await localPool.execute(
+      "ALTER TABLE orders ADD COLUMN billing_address_json LONGTEXT NULL AFTER submitted_at",
+    );
+  }
+  if (!(await columnExists(localPool, "orders", "shipping_address_json"))) {
+    await localPool.execute(
+      "ALTER TABLE orders ADD COLUMN shipping_address_json LONGTEXT NULL AFTER billing_address_json",
+    );
+  }
+  if (!(await columnExists(localPool, "orders", "metadata_json"))) {
+    await localPool.execute(
+      "ALTER TABLE orders ADD COLUMN metadata_json LONGTEXT NULL AFTER shipping_address_json",
+    );
+  }
+  if (!(await indexExists(localPool, "orders", "idx_orders_user"))) {
+    await localPool.execute("CREATE INDEX idx_orders_user ON orders (user_id)");
+  }
+  if (!(await indexExists(localPool, "orders", "idx_orders_status"))) {
+    await localPool.execute(
+      "CREATE INDEX idx_orders_status ON orders (status)",
+    );
+  }
+  if (!(await indexExists(localPool, "orders", "idx_orders_submitted_at"))) {
+    await localPool.execute(
+      "CREATE INDEX idx_orders_submitted_at ON orders (submitted_at)",
+    );
+  }
+  if (!(await constraintExists(localPool, "orders", "fk_orders_cart"))) {
+    await localPool.execute(
+      "ALTER TABLE orders ADD CONSTRAINT fk_orders_cart FOREIGN KEY (cart_id) REFERENCES shopping_carts(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    );
+  }
+
+  if (
+    !(await indexExists(
+      localPool,
+      "order_payments",
+      "uniq_order_payment_method",
+    ))
+  ) {
+    await localPool.execute(
+      "ALTER TABLE order_payments ADD UNIQUE KEY uniq_order_payment_method (order_id, payment_method)",
+    );
+  }
+
+  if (
+    !(await columnExists(localPool, "order_items", "product_snapshot_json"))
+  ) {
+    await localPool.execute(
+      "ALTER TABLE order_items ADD COLUMN product_snapshot_json LONGTEXT NULL AFTER line_total_cents",
+    );
   }
 
   await localPool.execute(
@@ -591,21 +672,29 @@ const ensureSchemaUpgrades = async (localPool) => {
         INDEX idx_user_tokens_user (user_id),
         INDEX idx_user_tokens_lookup (user_id, type, expires_at, consumed_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `
-  )
+    `,
+  );
 
   // Asegura que la columna de imagen de anuncios soporte data URLs grandes
-  await ensureColumnType(localPool, { table: 'announcements', column: 'image_url', type: 'MEDIUMTEXT' })
+  await ensureColumnType(localPool, {
+    table: "announcements",
+    column: "image_url",
+    type: "MEDIUMTEXT",
+  });
   // Y también la de imágenes de productos para permitir data URLs grandes
-  await ensureColumnType(localPool, { table: 'product_images', column: 'image_url', type: 'LONGTEXT' })
-}
+  await ensureColumnType(localPool, {
+    table: "product_images",
+    column: "image_url",
+    type: "LONGTEXT",
+  });
+};
 
 const seedInitialData = async () => {
-  const localPool = ensurePool()
-  const connection = await localPool.getConnection()
+  const localPool = ensurePool();
+  const connection = await localPool.getConnection();
 
   try {
-    await connection.beginTransaction()
+    await connection.beginTransaction();
 
     for (const category of categories) {
       await connection.execute(
@@ -618,8 +707,8 @@ const seedInitialData = async () => {
             is_active = VALUES(is_active),
             updated_at = CURRENT_TIMESTAMP(3)
         `,
-        [category.id, category.label, category.description]
-      )
+        [category.id, category.label, category.description],
+      );
     }
 
     for (const option of shippingOptions) {
@@ -634,18 +723,21 @@ const seedInitialData = async () => {
             is_active = VALUES(is_active),
             updated_at = CURRENT_TIMESTAMP(3)
         `,
-        [option.id, option.label, option.description, option.price]
-      )
+        [option.id, option.label, option.description, option.price],
+      );
 
-      await connection.execute('DELETE FROM shipping_regions WHERE shipping_option_id = ?', [option.id])
+      await connection.execute(
+        "DELETE FROM shipping_regions WHERE shipping_option_id = ?",
+        [option.id],
+      );
       for (const [index, region] of option.regions.entries()) {
         await connection.execute(
           `
             INSERT INTO shipping_regions (shipping_option_id, region, sort_order)
             VALUES (?, ?, ?)
           `,
-          [option.id, region, index]
-        )
+          [option.id, region, index],
+        );
       }
     }
 
@@ -660,16 +752,18 @@ const seedInitialData = async () => {
             is_active = VALUES(is_active),
             updated_at = CURRENT_TIMESTAMP(3)
         `,
-        [method.id, method.label, method.description]
-      )
+        [method.id, method.label, method.description],
+      );
     }
 
-    const [countRows] = await connection.query('SELECT COUNT(*) AS total FROM products')
-    const hasProducts = Number(countRows[0]?.total || 0) > 0
+    const [countRows] = await connection.query(
+      "SELECT COUNT(*) AS total FROM products",
+    );
+    const hasProducts = Number(countRows[0]?.total || 0) > 0;
 
     if (!hasProducts) {
       for (const product of products) {
-        const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
+        const now = new Date().toISOString().slice(0, 19).replace("T", " ");
 
         await connection.execute(
           `
@@ -708,64 +802,79 @@ const seedInitialData = async () => {
             product.currency,
             product.stock,
             now,
-            now
-          ]
-        )
+            now,
+          ],
+        );
 
-        await connection.execute('DELETE FROM product_images WHERE product_id = ?', [product.id])
+        await connection.execute(
+          "DELETE FROM product_images WHERE product_id = ?",
+          [product.id],
+        );
         for (const [index, imageUrl] of product.images.entries()) {
           await connection.execute(
             `
               INSERT INTO product_images (product_id, image_url, sort_order)
               VALUES (?, ?, ?)
             `,
-            [product.id, imageUrl, index]
-          )
+            [product.id, imageUrl, index],
+          );
         }
 
-        await connection.execute('DELETE FROM product_features WHERE product_id = ?', [product.id])
+        await connection.execute(
+          "DELETE FROM product_features WHERE product_id = ?",
+          [product.id],
+        );
         for (const [index, feature] of product.features.entries()) {
           await connection.execute(
             `
               INSERT INTO product_features (product_id, feature_text, sort_order)
               VALUES (?, ?, ?)
             `,
-            [product.id, feature, index]
-          )
+            [product.id, feature, index],
+          );
         }
 
-        await connection.execute('DELETE FROM product_highlights WHERE product_id = ?', [product.id])
+        await connection.execute(
+          "DELETE FROM product_highlights WHERE product_id = ?",
+          [product.id],
+        );
         for (const [index, highlight] of product.highlights.entries()) {
           await connection.execute(
             `
               INSERT INTO product_highlights (product_id, highlight_text, sort_order)
               VALUES (?, ?, ?)
             `,
-            [product.id, highlight, index]
-          )
+            [product.id, highlight, index],
+          );
         }
 
-        await connection.execute('DELETE FROM product_specs WHERE product_id = ?', [product.id])
-        const specEntries = Object.entries(product.specs || {})
+        await connection.execute(
+          "DELETE FROM product_specs WHERE product_id = ?",
+          [product.id],
+        );
+        const specEntries = Object.entries(product.specs || {});
         for (const [index, [key, value]] of specEntries.entries()) {
           await connection.execute(
             `
               INSERT INTO product_specs (product_id, spec_key, spec_value, sort_order)
               VALUES (?, ?, ?, ?)
             `,
-            [product.id, key, String(value), index]
-          )
+            [product.id, key, String(value), index],
+          );
         }
 
-        await connection.execute('DELETE FROM product_tags WHERE product_id = ?', [product.id])
+        await connection.execute(
+          "DELETE FROM product_tags WHERE product_id = ?",
+          [product.id],
+        );
         for (const tag of product.tags || []) {
           await connection.execute(
             `
               INSERT INTO product_tags (product_id, tag)
               VALUES (?, ?)
             `,
-            [product.id, tag]
-          )
+            [product.id, tag],
+          );
         }
       }
     }
@@ -805,18 +914,23 @@ const seedInitialData = async () => {
           announcement.ctaUrl || null,
           announcement.imageUrl || null,
           announcement.sortOrder || 0,
-          announcement.isActive ? 1 : 0
-        ]
-      )
+          announcement.isActive ? 1 : 0,
+        ],
+      );
     }
 
     if (ADMIN_EMAIL && ADMIN_PASSWORD) {
-      const email = ADMIN_EMAIL.trim().toLowerCase()
-      const passwordHash = bcrypt.hashSync(ADMIN_PASSWORD.trim(), 10)
-      const name = ADMIN_NAME && ADMIN_NAME.trim() ? ADMIN_NAME.trim() : 'Administrador MACLA'
-      const nowSql = formatDateForSql(new Date())
+      const email = ADMIN_EMAIL.trim().toLowerCase();
+      const passwordHash = bcrypt.hashSync(ADMIN_PASSWORD.trim(), 10);
+      const name =
+        ADMIN_NAME && ADMIN_NAME.trim()
+          ? ADMIN_NAME.trim()
+          : "Administrador MACLA";
+      const nowSql = formatDateForSql(new Date());
       const adminId =
-        typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')
+        typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : crypto.randomBytes(16).toString("hex");
 
       await connection.execute(
         `
@@ -843,25 +957,25 @@ const seedInitialData = async () => {
             email_verified_at = COALESCE(email_verified_at, VALUES(email_verified_at)),
             updated_at = CURRENT_TIMESTAMP(3)
         `,
-        [adminId, name, email, passwordHash, nowSql, nowSql, nowSql]
-      )
+        [adminId, name, email, passwordHash, nowSql, nowSql, nowSql],
+      );
     }
 
-    await connection.commit()
+    await connection.commit();
   } catch (error) {
-    await connection.rollback()
-    throw error
+    await connection.rollback();
+    throw error;
   } finally {
-    connection.release()
+    connection.release();
   }
-}
+};
 
 const initDatabase = async () => {
   if (pool) {
-    return pool
+    return pool;
   }
 
-  await createDatabaseIfNeeded()
+  await createDatabaseIfNeeded();
 
   pool = mysql.createPool({
     host: DB_HOST,
@@ -873,21 +987,21 @@ const initDatabase = async () => {
     connectionLimit: Number(DB_CONNECTION_LIMIT),
     queueLimit: 0,
     supportBigNumbers: true,
-    namedPlaceholders: false
-  })
+    namedPlaceholders: false,
+  });
 
-  await createSchemaIfNeeded()
+  await createSchemaIfNeeded();
 
-  return pool
-}
+  return pool;
+};
 
 const query = (sql, params = []) => {
-  const localPool = ensurePool()
-  return localPool.execute(sql, params)
-}
+  const localPool = ensurePool();
+  return localPool.execute(sql, params);
+};
 
 module.exports = {
   initDatabase,
   query,
-  getPool: () => ensurePool()
-}
+  getPool: () => ensurePool(),
+};
