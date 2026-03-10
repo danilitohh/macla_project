@@ -13,10 +13,10 @@ export const products: Product[] = [
     stock: 120,
     images: [
       '/plancha.png',
-      'https://dummyimage.com/800x900/ffe4f2/6b2e3b&text=MACLA+2+en+1+Frente',
-      'https://dummyimage.com/800x900/fdd8f0/6b2e3b&text=Seca+y+alisa+en+1+paso',
-      'https://dummyimage.com/800x900/fccbe8/6b2e3b&text=Brillo+desde+la+primera+pasada',
-      '/product-demo.mp4'
+      '/uploads/product-plancha-secadora-2en1-0-1770746284819-4v881t.webp',
+      '/uploads/product-plancha-secadora-2en1-1-1770746284822-gu869j.webp',
+      '/uploads/product-plancha-secadora-2en1-2-1770746284823-wwhtk2.webp',
+      '/uploads/product-plancha-secadora-2en1-10-1770746284829-pt788x.mp4'
     ],
     features: [
       'Seca y alisa en un solo paso, de húmedo a look terminado.',
